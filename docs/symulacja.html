@@ -1,0 +1,1146 @@
+<title>Termostat ESP32-ogrzewanie</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Układ: urządzenie (ekran 480x320 w obudowie) po lewej, pulpit symulacji po prawej,
+   pod spodem tabela połączeń. Kolory pulpitu = kolory interfejsu termostatu. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #161b22;
+  --muted: #5d6877;
+  --line: #d5dbe3;
+  --accent: #d9821a;
+  --heat: #e2551b;
+  --eco: #2f7fd0;
+  --ok: #1f9e63;
+  --alarm: #d23b43;
+  --bezel: #2a2f37;
+  --bezel-edge: #3c434e;
+  --font-ui: 'Barlow Semi Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b0d11; --surface: #151a21; --ink: #e8ecf1; --muted: #8f99a8; --line: #27303b;
+    --accent: #f5a524; --heat: #ff6b2c; --eco: #4c9eeb; --ok: #3dd68c; --alarm: #f2545b;
+    --bezel: #1e232a; --bezel-edge: #333b46; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b0d11; --surface: #151a21; --ink: #e8ecf1; --muted: #8f99a8; --line: #27303b;
+  --accent: #f5a524; --heat: #ff6b2c; --eco: #4c9eeb; --ok: #3dd68c; --alarm: #f2545b;
+  --bezel: #1e232a; --bezel-edge: #333b46; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 17px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1160px; margin: 0 auto; display: grid; gap: 28px; }
+header h1 { font-size: 34px; font-weight: 600; margin: 0; letter-spacing: .2px; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+@media (max-width: 900px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+.device {
+  background: var(--bezel); border: 1px solid var(--bezel-edge); border-radius: 22px;
+  padding: clamp(10px, 2.6vw, 26px) clamp(10px, 3vw, 34px); box-shadow: 0 18px 40px -24px rgba(0,0,0,.55);
+}
+.device canvas { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; max-width: 100%;
+  border-radius: 4px; background: #0e1116; touch-action: none; cursor: pointer; }
+.device .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px;
+  color: #8a94a3; font-family: var(--font-mono); font-size: 12px; gap: 12px; flex-wrap: wrap; }
+.led { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #27303b; vertical-align: middle; margin-right: 6px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: grid; gap: 18px; }
+.panel h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 0; font-weight: 600; }
+.out { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; }
+.pin { font-family: var(--font-mono); font-size: 28px; font-weight: 500; padding: 4px 12px; border-radius: 8px; border: 2px solid var(--line); text-align: center; min-width: 96px; }
+.pin.low { border-color: var(--heat); color: var(--heat); }
+.out small { color: var(--muted); display: block; font-size: 14px; }
+.out b { font-weight: 600; }
+.readings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.readings div { display: grid; }
+.readings span { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .8px; }
+.readings strong { font-family: var(--font-mono); font-weight: 500; font-size: 19px; font-variant-numeric: tabular-nums; }
+.ctl { display: grid; gap: 8px; }
+.ctl label { display: flex; justify-content: space-between; font-size: 15px; color: var(--muted); }
+.ctl label output { font-family: var(--font-mono); color: var(--ink); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg button { font: inherit; font-size: 15px; padding: 7px 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; border-left: 1px solid var(--line); }
+.seg button:first-child { border-left: 0; }
+.seg button[aria-pressed=true] { background: var(--accent); color: #111; font-weight: 600; }
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn { font: inherit; font-size: 15px; padding: 9px 10px; border-radius: 9px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.btn[aria-pressed=true] { border-color: var(--alarm); color: var(--alarm); }
+.btn.win[aria-pressed=true] { border-color: var(--eco); color: var(--eco); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hint { color: var(--muted); font-size: 14px; margin: 0; }
+
+section.wiring { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 900px) { section.wiring { grid-template-columns: minmax(0, 1fr); } }
+section h2 { font-size: 22px; font-weight: 600; margin: 0 0 10px; }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 520px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td.g { font-family: var(--font-mono); white-space: nowrap; color: var(--accent); }
+td.m { font-family: var(--font-mono); white-space: nowrap; }
+.notes { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.notes li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.notes b { display: block; font-weight: 600; margin-bottom: 2px; }
+.notes span { color: var(--muted); font-size: 15px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>ESP32-ogrzewanie</h1>
+    <p>Symulacja termostatu na ESP32-C3 z ekranem ST7796 480×320. Klikaj ekran jak palcem; przytrzymanie + / − przewija wartości. Model pokoju, czujnika DS18B20 i głowicy grzejnika liczy się w tle, więc regulacja reaguje tak jak w urządzeniu.</p>
+  </header>
+
+  <div class="stage">
+    <div class="device">
+      <canvas id="lcd" width="480" height="320" aria-label="Ekran termostatu 480 na 320 pikseli"></canvas>
+      <div class="foot"><span><span class="led" id="rgb"></span>LOLIN C3 Mini · LED stanu (GPIO7)</span><span id="simclock">--</span></div>
+    </div>
+
+    <aside class="panel" aria-label="Pulpit symulacji">
+      <div class="out">
+        <div class="pin" id="pin">HIGH</div>
+        <div><b id="relay">Przekaźnik wyłączony</b><small id="valve">GPIO3 · głowica zamknięta</small></div>
+      </div>
+      <div class="readings">
+        <div><span>Pokój</span><strong id="rTemp">--</strong></div>
+        <div><span>Zadana</span><strong id="rSet">--</strong></div>
+        <div><span>Grzejnik</span><strong id="rRad">--</strong></div>
+        <div><span>Grzanie dziś</span><strong id="rToday">--</strong></div>
+      </div>
+      <div class="ctl">
+        <h2>Prędkość czasu</h2>
+        <div class="seg" id="speed" role="group" aria-label="Prędkość symulacji">
+          <button type="button" data-v="1" aria-pressed="false">1×</button>
+          <button type="button" data-v="30" aria-pressed="true">30×</button>
+          <button type="button" data-v="120" aria-pressed="false">120×</button>
+          <button type="button" data-v="600" aria-pressed="false">600×</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="tout">Temperatura na zewnątrz <output id="toutV">2 °C</output></label>
+        <input id="tout" type="range" min="-15" max="15" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <h2>Zdarzenia</h2>
+        <div class="btns">
+          <button type="button" class="btn win" id="bWin" aria-pressed="false">Otwórz okno</button>
+          <button type="button" class="btn" id="bFault" aria-pressed="false">Odłącz czujnik</button>
+          <button type="button" class="btn" id="bBoot">Przycisk BOOT</button>
+          <button type="button" class="btn" id="bReset">Reset symulacji</button>
+        </div>
+        <p class="hint">Otwarte okno szybko wychładza pokój; po spadku o 1 °C w 5 min termostat wstrzyma grzanie. Odłączony czujnik włącza pracę awaryjną.</p>
+      </div>
+    </aside>
+  </div>
+
+  <section class="wiring">
+    <div>
+      <h2>Połączenia</h2>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>ESP32-C3</th><th>Do</th><th>Uwagi</th></tr></thead>
+          <tbody>
+            <tr><td class="g">GPIO4</td><td class="m">TFT SCK + T_CLK</td><td>wspólny zegar SPI</td></tr>
+            <tr><td class="g">GPIO6</td><td class="m">TFT SDI + T_DIN</td><td>MOSI</td></tr>
+            <tr><td class="g">GPIO5</td><td class="m">T_DO</td><td>MISO tylko z dotyku; SDO wyświetlacza zostaw wolne</td></tr>
+            <tr><td class="g">GPIO10</td><td class="m">TFT CS</td><td></td></tr>
+            <tr><td class="g">GPIO8</td><td class="m">TFT DC/RS</td><td>pin startowy, sterowany dopiero po uruchomieniu</td></tr>
+            <tr><td class="g">GPIO1</td><td class="m">TFT RESET</td><td></td></tr>
+            <tr><td class="g">GPIO21</td><td class="m">TFT LED</td><td>jasność PWM; przy starcie chwilę mignie</td></tr>
+            <tr><td class="g">GPIO20</td><td class="m">T_CS</td><td>T_IRQ niepodłączony</td></tr>
+            <tr><td class="g">GPIO0</td><td class="m">DS18B20 DQ</td><td>rezystor 4,7 kΩ do 3V3</td></tr>
+            <tr><td class="g">GPIO3</td><td class="m">IN przekaźnika</td><td>aktywny stan NISKI; rezystor 10 kΩ do 3V3</td></tr>
+            <tr><td class="g">GPIO7</td><td class="m">—</td><td>dioda RGB na płytce, pokazuje stan</td></tr>
+            <tr><td class="g">5V / GND</td><td class="m">VCC wyświetlacza, JD-VCC</td><td>zasilacz 5 V min. 1 A</td></tr>
+            <tr><td class="g">3V3</td><td class="m">VCC czujnika, VCC przekaźnika</td><td>strona optotranzystora</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h2>Na co uważać</h2>
+      <ul class="notes">
+        <li><b>Sterowanie ujemne</b><span>Moduł przekaźnika z transoptorem: VCC na 3V3, JD-VCC na 5 V (zdejmij zworkę). Wtedy wysoki stan GPIO3 na pewno wyłącza przekaźnik. Przy SSR: „+” do 3V3, „−” do GPIO3.</span></li>
+        <li><b>Stan przy starcie</b><span>GPIO3 nie jest pinem startowym ani UART, a rezystor 10 kΩ trzyma go w stanie wysokim podczas resetu, więc głowica nie załączy się przypadkiem.</span></li>
+        <li><b>Strona 230 V</b><span>Głowice 230 V podłącz przez styki stycznika lub przekaźnika z zabezpieczeniem. Cewkę stycznika 230 V zabezpiecz gasikiem RC. Prace przy sieci wykonuje osoba z uprawnieniami.</span></li>
+        <li><b>Czujnik</b><span>DS18B20 umieść na ścianie wewnętrznej ok. 1,5 m nad podłogą, z dala od grzejnika i elektroniki. Ewentualną różnicę wyrównasz w Ustawienia → Czujnik → Korekta.</span></li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+'use strict';
+// ============================================================ kolory/czcionki
+const C = {
+  BG: 0x0E1116, PANEL: 0x1A1F27, PANEL2: 0x262D38, LINE: 0x353E4C, TEXT: 0xE8ECF1, MUTED: 0x8A94A3,
+  HEAT: 0xFF6B2C, COMFORT: 0xF5A524, ECO: 0x4C9EEB, ECO_DK: 0x1D3550, FROST: 0x5ED6E6, VAC: 0x2EC4B6,
+  BOOST: 0xFF4FA3, OK: 0x3DD68C, ALARM: 0xF2545B
+};
+const css = c => '#' + c.toString(16).padStart(6, '0');
+const F_S = 0, F_M = 1, F_B = 2, F_XL = 3, F_BIG = 4;
+const FONT = ["500 16px", "500 20px", "600 26px", "600 40px", "500 96px"].map(f => f + " 'Barlow Semi Condensed', 'Arial Narrow', sans-serif");
+const ASC = [14, 18, 25, 38, 78];
+const AL_L = 0, AL_C = 1, AL_R = 2;
+const W = 480, H = 320;
+
+const canvas = document.getElementById('lcd');
+const ctx = canvas.getContext('2d');
+function setupCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+setupCanvas();
+
+// =========================================== warstwa graficzna jak LovyanGFX
+const lcd = {
+  fillScreen(c) { this.fillRect(0, 0, W, H, c); },
+  fillRect(x, y, w, h, c) { ctx.fillStyle = css(c); ctx.fillRect(x, y, w, h); },
+  drawRect(x, y, w, h, c) { ctx.strokeStyle = css(c); ctx.lineWidth = 1; ctx.strokeRect(x + .5, y + .5, w - 1, h - 1); },
+  fillRoundRect(x, y, w, h, r, c) { ctx.fillStyle = css(c); ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill(); },
+  drawRoundRect(x, y, w, h, r, c) { ctx.strokeStyle = css(c); ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(x + .5, y + .5, w - 1, h - 1, r); ctx.stroke(); },
+  fillCircle(x, y, r, c) { ctx.fillStyle = css(c); ctx.beginPath(); ctx.arc(x, y, r + .5, 0, Math.PI * 2); ctx.fill(); },
+  fillTriangle(x0, y0, x1, y1, x2, y2, c) { ctx.fillStyle = css(c); ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath(); ctx.fill(); },
+  drawWideLine(x0, y0, x1, y1, r, c) { ctx.strokeStyle = css(c); ctx.lineWidth = r * 2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); },
+  drawLine(x0, y0, x1, y1, c) { this.drawWideLine(x0 + .5, y0 + .5, x1 + .5, y1 + .5, .5, c); },
+  drawFastHLine(x, y, w, c) { this.fillRect(x, y, w, 1, c); },
+  drawFastVLine(x, y, h, c) { this.fillRect(x, y, 1, h, c); },
+  fillArc(x, y, r0, r1, a0, a1, c) {
+    if (a1 <= a0) a1 += 360;
+    const d = Math.PI / 180;
+    ctx.fillStyle = css(c); ctx.beginPath();
+    ctx.arc(x, y, r1, a0 * d, a1 * d);
+    if (r0 > 0) ctx.arc(x, y, r0, a1 * d, a0 * d, true); else ctx.lineTo(x, y);
+    ctx.closePath(); ctx.fill();
+  }
+};
+function textW(s, f) { ctx.font = FONT[f]; return Math.round(ctx.measureText(s).width); }
+function text(x, y, s, f, fg, bg, a = AL_L) {
+  ctx.font = FONT[f]; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  const w = ctx.measureText(s).width;
+  const dx = a === AL_C ? x - w / 2 : a === AL_R ? x - w : x;
+  ctx.fillStyle = css(fg); ctx.fillText(s, dx, y + ASC[f]);
+  return Math.round(w);
+}
+const textMid = (x, cy, s, f, fg, bg, a = AL_L) => text(x, cy - Math.floor(ASC[f] / 2), s, f, fg, bg, a);
+
+// ================================================================== ikony
+const PI = Math.PI;
+function iconFlame(cx, cy, c, bg) { lcd.fillCircle(cx, cy + 4, 7, c); lcd.fillTriangle(cx - 7, cy + 3, cx + 7, cy + 3, cx + 1, cy - 11, c); lcd.fillCircle(cx, cy + 6, 3, bg); }
+function iconSnow(cx, cy, c) { for (let i = 0; i < 3; i++) { const a = i * PI / 3, dx = Math.cos(a) * 9, dy = Math.sin(a) * 9; lcd.drawWideLine(cx - dx, cy - dy, cx + dx, cy + dy, 1.2, c); } }
+function iconWifi(cx, cy, lvl, on, off) { lcd.fillCircle(cx, cy + 6, 2, lvl > 0 ? on : off); lcd.fillArc(cx, cy + 6, 7, 9, 225, 315, lvl > 0 ? on : off); lcd.fillArc(cx, cy + 6, 12, 14, 225, 315, lvl > 1 ? on : off); }
+function iconLock(cx, cy, c, bg) { lcd.fillArc(cx, cy - 2, 4, 6, 180, 360, c); lcd.fillRect(cx - 6, cy - 2, 2, 2, c); lcd.fillRect(cx + 4, cy - 2, 2, 2, c); lcd.fillRoundRect(cx - 8, cy, 16, 11, 2, c); lcd.fillCircle(cx, cy + 5, 2, bg); }
+function iconWarn(cx, cy, c, bg) { lcd.fillTriangle(cx, cy - 10, cx - 10, cy + 8, cx + 10, cy + 8, c); lcd.fillRect(cx - 1, cy - 4, 3, 7, bg); lcd.fillRect(cx - 1, cy + 4, 3, 2, bg); }
+function iconCalendar(cx, cy, c, bg) { lcd.fillRoundRect(cx - 10, cy - 8, 20, 18, 3, c); lcd.fillRect(cx - 8, cy - 3, 16, 11, bg); lcd.fillRect(cx - 6, cy - 12, 3, 6, c); lcd.fillRect(cx + 3, cy - 12, 3, 6, c); lcd.fillRect(cx - 5, cy, 4, 3, c); lcd.fillRect(cx + 1, cy + 3, 4, 3, c); }
+function iconChart(cx, cy, c) { lcd.fillRect(cx - 10, cy + 2, 5, 8, c); lcd.fillRect(cx - 2, cy - 6, 5, 16, c); lcd.fillRect(cx + 6, cy - 2, 5, 12, c); }
+function iconMenu(cx, cy, c) { for (let i = -1; i <= 1; i++) lcd.fillRoundRect(cx - 10, cy + i * 7 - 1, 20, 3, 1, c); }
+function iconMode(cx, cy, c, bg) { lcd.fillCircle(cx, cy, 10, c); lcd.fillCircle(cx, cy, 7, bg); lcd.fillArc(cx, cy, 0, 7, 270, 90, c); }
+function iconMoon(cx, cy, c, bg) { lcd.fillCircle(cx, cy, 10, c); lcd.fillCircle(cx + 6, cy - 4, 9, bg); }
+function iconThermo(cx, cy, c, bg) { lcd.fillRoundRect(cx - 4, cy - 12, 8, 18, 4, c); lcd.fillCircle(cx, cy + 7, 6, c); lcd.fillRect(cx - 1, cy - 9, 2, 12, bg); }
+function iconCase(cx, cy, c, bg) { lcd.fillRoundRect(cx - 11, cy - 6, 22, 16, 3, c); lcd.drawRoundRect(cx - 5, cy - 11, 10, 7, 2, c); lcd.fillRect(cx - 11, cy, 22, 2, bg); }
+function iconWindow(cx, cy, c) { lcd.drawRect(cx - 9, cy - 9, 18, 18, c); lcd.drawRect(cx - 8, cy - 8, 16, 16, c); lcd.drawFastVLine(cx, cy - 8, 16, c); lcd.drawFastHLine(cx - 8, cy, 16, c); }
+function iconPlus(cx, cy, c) { lcd.fillRect(cx - 12, cy - 2, 24, 4, c); lcd.fillRect(cx - 2, cy - 12, 4, 24, c); }
+function iconMinus(cx, cy, c) { lcd.fillRect(cx - 12, cy - 2, 24, 4, c); }
+function iconChevron(cx, cy, d, c) {
+  const s = 6, L = (a, b, e, f) => lcd.drawWideLine(a, b, e, f, 1.5, c);
+  if (d === 'l') { L(cx + s / 2, cy - s, cx - s / 2, cy); L(cx - s / 2, cy, cx + s / 2, cy + s); }
+  if (d === 'r') { L(cx - s / 2, cy - s, cx + s / 2, cy); L(cx + s / 2, cy, cx - s / 2, cy + s); }
+  if (d === 'u') { L(cx - s, cy + s / 2, cx, cy - s / 2); L(cx, cy - s / 2, cx + s, cy + s / 2); }
+  if (d === 'd') { L(cx - s, cy - s / 2, cx, cy + s / 2); L(cx, cy + s / 2, cx + s, cy - s / 2); }
+}
+function iconCheck(cx, cy, c) { lcd.drawWideLine(cx - 6, cy, cx - 2, cy + 4, 1.5, c); lcd.drawWideLine(cx - 2, cy + 4, cx + 6, cy - 5, 1.5, c); }
+const R = (x, y, w, h) => ({ x, y, w, h, hit(px, py) { return px >= x && px < x + w && py >= y && py < y + h; } });
+function button(r, label, bg, fg, f = F_M) { lcd.fillRoundRect(r.x, r.y, r.w, r.h, 10, bg); if (label) textMid(r.x + r.w / 2, r.y + r.h / 2, label, f, fg, bg, AL_C); }
+
+// =============================================================== ustawienia
+const MODE_AUTO = 0, MODE_MANUAL = 1, MODE_ECO = 2, MODE_OFF = 3, MODE_VACATION = 4;
+const ALGO_HYST = 0, ALGO_TPI = 1, FAULT_OFF = 0, FAULT_DUTY = 1;
+const SRC = { COMFORT: 0, ECO: 1, MANUAL: 2, FROST: 3, VACATION: 4, BOOST: 5, OVERRIDE: 6, WINDOW: 7, FAULT: 8 };
+const MAX_PERIODS = 4, HISTORY_LEN = 288, HISTORY_PERIOD_S = 300;
+
+function defaults() {
+  const week = [];
+  for (let d = 0; d < 7; d++) week.push(d < 5 ? { start: [360, 900], end: [480, 1320] } : { start: [450], end: [1380] });
+  return {
+    mode: MODE_AUTO, tComfort: 215, tEco: 180, tManual: 210, tVacation: 150, tFrost: 70, tBoost: 240, tMax: 280,
+    algo: ALGO_HYST, hyst: 4, tpiCycle: 15, tpiBand: 15, minOn: 3, minOff: 3,
+    outActiveLow: 1, valveNO: 0, antiBlock: 1, abDay: 0, abHour: 10, abMinutes: 5,
+    offset: 0, filter: 2, faultMode: FAULT_DUTY, faultDuty: 20,
+    winEnable: 1, winDrop: 10, winTime: 5, winPause: 20,
+    boostMin: 60, vacDays: 7, vacUntil: 0,
+    brightness: 80, dimBrightness: 10, dimAfter: 60, childLock: 0,
+    ntp: 1, wifiEnable: 1, ssid: 'DomWiFi', week
+  };
+}
+let cfg = defaults();
+const stats = { relayCycles: 0, heatSecondsTotal: 0 };
+
+function scheduleSort(d) {
+  const p = d.start.map((s, i) => [s, d.end[i]]).filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
+  d.start = p.map(x => x[0]); d.end = p.map(x => x[1]);
+}
+function scheduleIsComfort(dow, m) { const d = cfg.week[dow % 7]; for (let i = 0; i < d.start.length; i++) if (m >= d.start[i] && m < d.end[i]) return true; return false; }
+function scheduleNextChange(dow, minute) {
+  const now = scheduleIsComfort(dow, minute);
+  let m = (Math.floor(minute / 15) + 1) * 15;
+  for (let off = 0; off < 8; off++) { for (; m < 1440; m += 15) if (scheduleIsComfort((dow + off) % 7, m) !== now) return { off, at: m }; m = 0; }
+  return null;
+}
+
+// ======================================================= czas symulowany
+let simMs = 0;                       // odpowiednik millis()
+let epoch0 = 0;                      // czas lokalny startu (ms)
+const clockNowMs = () => epoch0 + simMs;
+const clockNow = () => Math.floor(clockNowMs() / 1000);
+const local = () => new Date(clockNowMs());
+const dowOf = d => (d.getDay() + 6) % 7;
+let clockOk = true;
+
+// ===================================================== model pomieszczenia
+const room = { T: 20.4, rad: 22, valve: 0, Tout: 2, window: false, sensorUnplugged: false };
+function roomStep(dt, heatOn) {
+  // głowica termoelektryczna: otwieranie ~3 min, grzejnik: stała czasowa ~12 min
+  const target = heatOn ? 1 : 0;
+  room.valve += (target - room.valve) * Math.min(1, dt / 180);
+  const radTarget = room.Tout + 0 + room.valve * 55 + 2;
+  const radEq = Math.max(room.T, radTarget);
+  room.rad += (radEq - room.rad) * Math.min(1, dt / 720);
+  const loss = (room.window ? 2.2 : 0.22) * (room.T - room.Tout) / 3600;
+  const gain = Math.max(0, room.rad - room.T) * 0.2 / 3600;
+  room.T += (gain - loss) * dt;
+}
+
+// ================================================================ czujnik
+const sensor = { present: true, fault: false, raw: NaN, value: NaN, errors: 0, bad: 0, last: -99999 };
+function sensorStep() {
+  if (simMs - sensor.last < 2000) return;
+  sensor.last = simMs;
+  if (room.sensorUnplugged) { sensor.errors++; if (++sensor.bad >= 5) { sensor.fault = true; sensor.present = false; } return; }
+  sensor.present = true; sensor.bad = 0;
+  const t = Math.round((room.T + (Math.random() - .5) * .05) * 16) / 16;   // rozdzielczość 1/16 °C
+  sensor.raw = t;
+  const corr = t + cfg.offset / 10;
+  if (sensor.fault || isNaN(sensor.value)) sensor.value = corr;
+  else sensor.value += (corr - sensor.value) / (1 + cfg.filter * 1.5);
+  sensor.fault = false;
+}
+
+// ============================================================== regulator
+const th = {
+  target: 210, source: SRC.COMFORT, demand: false, heating: false, outputLevel: true, duty: 0,
+  boost: false, boostEnd: 0, override: false, overrideTemp: 0, overrideUntil: 0,
+  windowOpen: false, windowEnd: 0, antiBlock: false, antiBlockEnd: 0, testOutput: false, testEnd: 0,
+  heatSecToday: 0, heatSecYesterday: 0, cyclesToday: 0, weekMinutes: [0, 0, 0, 0, 0, 0, 0],
+  histTemp: new Array(HISTORY_LEN).fill(null), histTarget: new Array(HISTORY_LEN).fill(0), histHeat: new Array(HISTORY_LEN).fill(0),
+  histCount: 0, histHead: 0
+};
+let lastSwitch = -3600000, lastOn = 0, everOn = false, cycleStart = 0, cycleOn = 0, lastYday = -1, lastAbDay = -1;
+let histSecs = 0, histHeatSecs = 0, winBuf = [], secToMinute = 0;
+const ydayOf = d => Math.floor((d - new Date(d.getFullYear(), 0, 1)) / 86400000);
+
+function applyOutput(heat) {
+  const energize = cfg.valveNO ? !heat : heat;
+  th.outputLevel = cfg.outActiveLow ? !energize : energize;
+}
+function computeTarget() {
+  const t = local();
+  if (cfg.mode === MODE_VACATION && cfg.vacUntil && clockNow() >= cfg.vacUntil) { cfg.mode = MODE_AUTO; cfg.vacUntil = 0; }
+  if (th.override && th.overrideUntil && clockNow() >= th.overrideUntil) th.override = false;
+  let target, src;
+  switch (cfg.mode) {
+    case MODE_MANUAL: target = cfg.tManual; src = SRC.MANUAL; break;
+    case MODE_ECO: target = cfg.tEco; src = SRC.ECO; break;
+    case MODE_OFF: target = cfg.tFrost; src = SRC.FROST; break;
+    case MODE_VACATION: target = cfg.tVacation; src = SRC.VACATION; break;
+    default: {
+      const comfort = clockOk ? scheduleIsComfort(dowOf(t), t.getHours() * 60 + t.getMinutes()) : true;
+      target = comfort ? cfg.tComfort : cfg.tEco; src = comfort ? SRC.COMFORT : SRC.ECO;
+      if (th.override) { target = th.overrideTemp; src = SRC.OVERRIDE; }
+    }
+  }
+  if (th.boost) { if (simMs >= th.boostEnd) th.boost = false; else if (cfg.mode !== MODE_OFF) { target = cfg.tBoost; src = SRC.BOOST; } }
+  if (th.windowOpen) { if (simMs >= th.windowEnd) th.windowOpen = false; else { target = cfg.tFrost; src = SRC.WINDOW; } }
+  if (target > cfg.tMax) target = cfg.tMax;
+  if (target < cfg.tFrost && cfg.mode !== MODE_OFF) target = cfg.tFrost;
+  th.target = target; th.source = src;
+}
+function windowDetect() {
+  if (!cfg.winEnable || sensor.fault) { winBuf = []; return; }
+  if (++secToMinute < 60) return;
+  secToMinute = 0;
+  winBuf.push(sensor.value); if (winBuf.length > 16) winBuf.shift();
+  const span = cfg.winTime;
+  if (winBuf.length <= span || th.windowOpen) return;
+  const drop = winBuf[winBuf.length - 1 - span] - sensor.value;
+  if (drop * 10 >= cfg.winDrop) { th.windowOpen = true; th.windowEnd = simMs + cfg.winPause * 60000; winBuf = []; }
+}
+function regulate() {
+  const T = sensor.value, target = th.target / 10;
+  if (sensor.fault) {
+    th.source = SRC.FAULT;
+    if (cfg.faultMode === FAULT_OFF) { th.duty = 0; return false; }
+    const cyc = 20 * 60000;
+    if (simMs - cycleStart >= cyc) cycleStart = simMs;
+    th.duty = cfg.faultDuty / 100;
+    return (simMs - cycleStart) < th.duty * cyc;
+  }
+  let on = th.demand;
+  const canOff = simMs - lastSwitch >= cfg.minOn * 60000, canOn = simMs - lastSwitch >= cfg.minOff * 60000;
+  if (cfg.algo === ALGO_HYST) {
+    const h = cfg.hyst / 20;
+    if (on && T >= target + h && canOff) on = false;
+    else if (!on && T <= target - h && canOn) on = true;
+    th.duty = on ? 1 : 0;
+  } else {
+    const cyc = cfg.tpiCycle * 60000;
+    if (simMs - cycleStart >= cyc || cycleStart === 0) {
+      cycleStart = simMs;
+      let d = Math.min(1, Math.max(0, .5 + (target - T) / (cfg.tpiBand / 10)));
+      let onMs = d * cyc;
+      if (onMs < cfg.minOn * 60000) onMs = 0;
+      if (cyc - onMs < cfg.minOff * 60000 && onMs > 0) onMs = cyc;
+      cycleOn = onMs; th.duty = onMs / cyc;
+    }
+    on = (simMs - cycleStart) < cycleOn;
+    if (T > target + cfg.tpiBand / 20) on = false;
+  }
+  return on;
+}
+function antiBlockCheck(t) {
+  if (th.antiBlock && simMs >= th.antiBlockEnd) th.antiBlock = false;
+  if (!cfg.antiBlock || th.antiBlock) return;
+  if (dowOf(t) === cfg.abDay && t.getHours() === cfg.abHour && t.getMinutes() === 0 && lastAbDay !== ydayOf(t)) {
+    lastAbDay = ydayOf(t);
+    if (!everOn || simMs - lastOn > 24 * 3600000) { th.antiBlock = true; th.antiBlockEnd = simMs + cfg.abMinutes * 60000; }
+  }
+}
+function statsTick(t) {
+  const yd = ydayOf(t);
+  if (lastYday >= 0 && yd !== lastYday) {
+    th.heatSecYesterday = th.heatSecToday; th.heatSecToday = 0; th.cyclesToday = 0;
+    th.weekMinutes.unshift(0); th.weekMinutes.length = 7;
+  }
+  lastYday = yd;
+  if (th.heating) { th.heatSecToday++; stats.heatSecondsTotal++; histHeatSecs++; }
+  th.weekMinutes[0] = Math.floor(th.heatSecToday / 60);
+  if (++histSecs >= HISTORY_PERIOD_S) {
+    th.histTemp[th.histHead] = sensor.fault ? null : Math.round(sensor.value * 10);
+    th.histTarget[th.histHead] = th.target;
+    th.histHeat[th.histHead] = Math.round(histHeatSecs * 100 / histSecs);
+    th.histHead = (th.histHead + 1) % HISTORY_LEN;
+    if (th.histCount < HISTORY_LEN) th.histCount++;
+    histSecs = histHeatSecs = 0;
+  }
+}
+function thermoTick() {      // co 1 s czasu symulowanego
+  const t = local();
+  computeTarget();
+  windowDetect();
+  if (th.windowOpen && th.source !== SRC.WINDOW) computeTarget();
+  th.demand = regulate();
+  antiBlockCheck(t);
+  if (th.testOutput && simMs >= th.testEnd) th.testOutput = false;
+  const heat = th.demand || th.antiBlock || th.testOutput;
+  if (heat !== th.heating) { th.heating = heat; lastSwitch = simMs; if (heat) { stats.relayCycles++; th.cyclesToday++; everOn = true; } }
+  if (heat) lastOn = simMs;
+  applyOutput(heat);
+  statsTick(t);
+}
+function simStep() { simMs += 1000; sensorStep(); thermoTick(); roomStep(1, th.heating); }
+
+// ------------------------------------------------------ akcje użytkownika
+function thermoSetMode(m) { cfg.mode = m; th.override = false; if (m !== MODE_VACATION) cfg.vacUntil = 0; thermoTick(); }
+const thermoCanAdjust = () => cfg.mode !== MODE_OFF && !sensor.fault;
+function thermoAdjust(delta) {
+  if (!thermoCanAdjust()) return;
+  const cl = v => Math.max(50, Math.min(cfg.tMax, v));
+  if (th.boost) cfg.tBoost = cl(cfg.tBoost + delta);
+  else if (cfg.mode === MODE_MANUAL) cfg.tManual = cl(cfg.tManual + delta);
+  else if (cfg.mode === MODE_ECO) cfg.tEco = cl(cfg.tEco + delta);
+  else if (cfg.mode === MODE_VACATION) cfg.tVacation = cl(cfg.tVacation + delta);
+  else {
+    th.overrideTemp = cl((th.override ? th.overrideTemp : th.target) + delta);
+    th.override = true; th.overrideUntil = 0;
+    const t = local(), n = scheduleNextChange(dowOf(t), t.getHours() * 60 + t.getMinutes());
+    if (n) { const e = new Date(t); e.setDate(e.getDate() + n.off); e.setHours(Math.floor(n.at / 60), n.at % 60, 0, 0); th.overrideUntil = Math.floor(e / 1000); }
+  }
+  computeTarget();
+}
+function thermoBoost(on) { th.boost = on; if (on) th.boostEnd = simMs + cfg.boostMin * 60000; thermoTick(); }
+const thermoBoostLeftS = () => th.boost ? Math.max(0, Math.floor((th.boostEnd - simMs) / 1000)) : 0;
+function thermoStartVacation() { cfg.mode = MODE_VACATION; cfg.vacUntil = clockNow() + cfg.vacDays * 86400; th.override = false; thermoTick(); }
+function thermoCancelWindow() { th.windowOpen = false; winBuf = []; thermoTick(); }
+function thermoTestOutput(s) { th.testOutput = s > 0; th.testEnd = simMs + s * 1000; thermoTick(); }
+
+// ============================================================= parametry
+const P_NUM = 0, P_ENUM = 1, P_BOOL = 2, P_INFO = 3, P_ACTION = 4;
+const GS = f => ({ get: () => cfg[f], set: v => { cfg[f] = v; } });
+const NUM = (name, min, max, step, dec, unit, gs, help, zeroText) => ({ name, type: P_NUM, min, max, step, dec, unit, ...gs, help, zeroText });
+const ENUM = (name, opts, gs, help) => ({ name, type: P_ENUM, min: 0, max: opts.length - 1, step: 1, opts, ...gs, help });
+const BOOL = (name, gs, help) => ({ name, type: P_BOOL, min: 0, max: 1, ...gs, help });
+const INFO = (name, info) => ({ name, type: P_INFO, info });
+const ACTION = (name, action, confirm, help) => ({ name, type: P_ACTION, action, confirm, help });
+const DAYS = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"];
+const pad2 = n => String(n).padStart(2, '0');
+function fmtDuration(s) { const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60; return d ? `${d} d ${h} h ${m} min` : `${h} h ${m} min`; }
+function setPart(part, v) {
+  const t = local(); const p = [t.getHours(), t.getMinutes(), t.getDate(), t.getMonth(), t.getFullYear()];
+  p[part] = part === 3 ? v - 1 : v;
+  const n = new Date(p[4], p[3], p[2], p[0], p[1], 0);
+  epoch0 = n.getTime() - simMs;
+}
+
+const CATEGORIES = [
+  { name: "Temperatury", params: [
+    NUM("Komfort", 50, 300, 1, 1, "°C", GS('tComfort'), "Temperatura w okresach komfortu programu tygodniowego."),
+    NUM("Eko (obniżona)", 50, 300, 1, 1, "°C", GS('tEco'), "Temperatura poza okresami komfortu oraz w trybie EKO."),
+    NUM("Tryb ręczny", 50, 300, 1, 1, "°C", GS('tManual'), "Stała temperatura w trybie RĘCZNYM."),
+    NUM("Urlop", 50, 250, 1, 1, "°C", GS('tVacation'), "Temperatura utrzymywana w czasie urlopu."),
+    NUM("Ochrona przed mrozem", 30, 120, 1, 1, "°C", GS('tFrost'), "Minimalna temperatura utrzymywana zawsze – także w trybie WYŁĄCZONY i przy otwartym oknie."),
+    NUM("Boost", 150, 300, 1, 1, "°C", GS('tBoost'), "Temperatura w czasie szybkiego dogrzewania (BOOST)."),
+    NUM("Czas boost", 15, 240, 15, 0, "min", GS('boostMin'), "Jak długo trwa BOOST po włączeniu."),
+    NUM("Limit maksymalny", 200, 350, 5, 1, "°C", GS('tMax'), "Żadna zadana nie przekroczy tej wartości."),
+  ]},
+  { name: "Regulacja", params: [
+    ENUM("Algorytm", ["Histereza", "TPI (PWM)"], GS('algo'), "Histereza: zał./wył. wokół zadanej. TPI: proporcjonalne wypełnienie cyklu – stabilniejsza temperatura."),
+    NUM("Histereza", 1, 20, 1, 1, "°C", GS('hyst'), "Grzanie włącza się przy T < zadana − H/2, wyłącza przy T > zadana + H/2."),
+    NUM("Cykl TPI", 10, 30, 5, 0, "min", GS('tpiCycle'), "Długość cyklu modulacji TPI."),
+    NUM("Pasmo TPI", 5, 40, 1, 1, "°C", GS('tpiBand'), "Uchyb, przy którym wypełnienie zmienia się od 0 do 100%. Mniejsze = szybsza reakcja."),
+    NUM("Min. czas załączenia", 0, 15, 1, 0, "min", GS('minOn'), "Chroni siłownik i stycznik. Głowica termoelektryczna otwiera się ok. 3 min."),
+    NUM("Min. czas wyłączenia", 0, 15, 1, 0, "min", GS('minOff'), "Minimalna przerwa między załączeniami."),
+  ]},
+  { name: "Wyjście i zawór", params: [
+    ENUM("Logika wyjścia", ["Ujemna (LOW)", "Dodatnia (HIGH)"], { get: () => cfg.outActiveLow ? 0 : 1, set: v => { cfg.outActiveLow = v === 0 ? 1 : 0; } }, "Ujemna: stan NISKI na GPIO3 załącza przekaźnik/stycznik (moduły aktywne stanem niskim)."),
+    ENUM("Typ siłownika", ["NC (bez napięcia zamkn.)", "NO (bez napięcia otw.)"], GS('valveNO'), "NC: zasilenie głowicy otwiera zawór (najczęstsze). NO: zasilenie zamyka zawór."),
+    BOOL("Ochrona zaworu", GS('antiBlock'), "Raz w tygodniu otwiera zawór, jeśli nie grzał przez 24 h – zapobiega zastaniu poza sezonem."),
+    ENUM("Dzień ochrony", DAYS, GS('abDay'), "Dzień tygodnia przewietrzenia zaworu."),
+    NUM("Godzina ochrony", 0, 23, 1, 0, ":00", GS('abHour'), "Godzina przewietrzenia zaworu."),
+    NUM("Czas ochrony", 1, 15, 1, 0, "min", GS('abMinutes'), "Jak długo zawór pozostaje otwarty."),
+  ]},
+  { name: "Czujnik", params: [
+    NUM("Korekta odczytu", -50, 50, 1, 1, "°C", GS('offset'), "Dodawana do odczytu. Porównaj z termometrem wzorcowym na wysokości 1,5 m."),
+    NUM("Wygładzanie", 0, 5, 1, 0, "", GS('filter'), "Filtr odczytu: 0 = brak, 5 = mocne (wolniejsza reakcja).", "Brak"),
+    ENUM("Przy awarii czujnika", ["Wyłącz grzanie", "Praca cykliczna"], GS('faultMode'), "Praca cykliczna grzeje przez zadany % czasu – chroni przed wychłodzeniem przy uszkodzonym czujniku."),
+    NUM("Wypełnienie awaryjne", 10, 50, 5, 0, "%", GS('faultDuty'), "Udział czasu grzania w cyklu 20 min przy awarii."),
+    INFO("Odczyt surowy", () => isNaN(sensor.raw) || sensor.fault ? "—" : sensor.raw.toFixed(2) + " °C"),
+    INFO("Adres czujnika", () => sensor.present ? "B60321C4A7FF" : "nie wykryto"),
+  ]},
+  { name: "Okno otwarte", params: [
+    BOOL("Wykrywanie okna", GS('winEnable'), "Szybki spadek temperatury wstrzymuje grzanie (utrzymywana jest tylko ochrona przed mrozem)."),
+    NUM("Spadek temperatury", 5, 30, 1, 1, "°C", GS('winDrop'), "O ile musi spaść temperatura..."),
+    NUM("W czasie", 2, 15, 1, 0, "min", GS('winTime'), "...w ciągu ilu minut."),
+    NUM("Przerwa w grzaniu", 5, 60, 5, 0, "min", GS('winPause'), "Czas wstrzymania grzania po wykryciu."),
+  ]},
+  { name: "Ekran", params: [
+    NUM("Jasność", 10, 100, 5, 0, "%", GS('brightness'), "Jasność podświetlenia podczas obsługi."),
+    NUM("Jasność wygaszona", 0, 50, 5, 0, "%", GS('dimBrightness'), "Jasność po bezczynności. 0 = ekran wygaszony."),
+    NUM("Wygaszanie po", 0, 600, 10, 0, "s", GS('dimAfter'), "Czas bezczynności do przyciemnienia ekranu.", "Nigdy"),
+    BOOL("Blokada rodzicielska", GS('childLock'), "Po wygaszeniu ekran blokuje się. Odblokowanie: przytrzymaj palec 3 s."),
+    ACTION("Kalibracja dotyku", () => uiToast("W symulacji niepotrzebna"), false, "Dotknij kolejno strzałek w rogach ekranu."),
+  ]},
+  { name: "Data i czas", params: [
+    BOOL("Synchronizacja NTP", GS('ntp'), "Automatyczny czas z internetu (wymaga Wi-Fi). Strefa: Polska, z czasem letnim."),
+    NUM("Godzina", 0, 23, 1, 0, "", { get: () => local().getHours(), set: v => setPart(0, v) }, "Ustaw godzinę."),
+    NUM("Minuta", 0, 59, 1, 0, "", { get: () => local().getMinutes(), set: v => setPart(1, v) }, "Ustaw minutę."),
+    NUM("Dzień", 1, 31, 1, 0, "", { get: () => local().getDate(), set: v => setPart(2, v) }, "Dzień miesiąca."),
+    NUM("Miesiąc", 1, 12, 1, 0, "", { get: () => local().getMonth() + 1, set: v => setPart(3, v) }, "Miesiąc."),
+    NUM("Rok", 2024, 2099, 1, 0, "", { get: () => local().getFullYear(), set: v => setPart(4, v) }, "Rok."),
+  ]},
+  { name: "Wi-Fi", params: [
+    BOOL("Wi-Fi", GS('wifiEnable'), "Wi-Fi daje czas z NTP i panel WWW pod adresem IP termostatu."),
+    INFO("Stan", () => apMode ? "Punkt dostępowy" : !cfg.wifiEnable ? "Wyłączone" : cfg.ssid ? "Połączono (-58 dBm)" : "Brak połączenia"),
+    INFO("Sieć", () => cfg.ssid || "—"),
+    INFO("Adres IP", () => apMode ? "192.168.4.1" : cfg.wifiEnable && cfg.ssid ? "192.168.1.47" : "-"),
+    ACTION("Konfiguruj przez telefon", () => { apMode = true; go(SCR_AP); }, false, "Uruchamia punkt dostępowy z formularzem."),
+    ACTION("Zapomnij sieć", () => { cfg.ssid = ''; uiToast("Usunięto dane sieci"); }, true, "Usuwa zapisaną nazwę i hasło sieci."),
+  ]},
+  { name: "Informacje", params: [
+    INFO("Wersja", () => "1.0.0"),
+    INFO("Czas pracy", () => fmtDuration(Math.floor(simMs / 1000))),
+    INFO("Grzanie łącznie", () => Math.floor(stats.heatSecondsTotal / 3600) + " h"),
+    INFO("Załączeń wyjścia", () => String(stats.relayCycles)),
+    INFO("Stan GPIO3", () => `${th.outputLevel ? 'HIGH' : 'LOW'} (${th.heating ? 'grzeje' : 'wył.'})`),
+    INFO("Błędy czujnika", () => String(sensor.errors)),
+    INFO("Wolna pamięć", () => "214 kB"),
+  ]},
+  { name: "Serwis", params: [
+    ACTION("Test wyjścia (30 s)", () => { thermoTestOutput(30); uiToast("Wyjście załączone na 30 s"); }, false, "Załącza stycznik/głowicę na 30 s."),
+    ACTION("Kalibracja dotyku", () => uiToast("W symulacji niepotrzebna"), false, ""),
+    ACTION("Zeruj statystyki", () => { stats.relayCycles = 0; stats.heatSecondsTotal = 0; th.heatSecToday = th.heatSecYesterday = 0; th.cyclesToday = 0; th.weekMinutes.fill(0); uiToast("Statystyki wyzerowane"); }, true, "Zeruje liczniki czasu grzania i załączeń."),
+    ACTION("Ustawienia fabryczne", () => { cfg = defaults(); uiToast("Przywrócono ustawienia"); }, true, "Przywraca wszystkie ustawienia i program tygodniowy (kalibracja dotyku zostaje)."),
+    ACTION("Uruchom ponownie", () => uiToast("Restart (w symulacji pomijany)"), true, ""),
+  ]},
+];
+
+function paramFormat(p, v) {
+  if (p.type === P_BOOL) return v ? "Wł." : "Wył.";
+  if (p.type === P_ENUM) return p.opts[v] ?? "?";
+  if (p.type === P_INFO) return p.info();
+  if (p.type === P_ACTION) return "";
+  if (v === 0 && p.zeroText) return p.zeroText;
+  let num;
+  if (p.dec === 1) { const a = Math.abs(v); num = (v < 0 ? "−" : (p.min < 0 && v > 0 ? "+" : "")) + Math.floor(a / 10) + "," + (a % 10); }
+  else num = String(v);
+  if (p.unit) return p.unit[0] === ':' ? num + p.unit : num + " " + p.unit;
+  return num;
+}
+
+// ===================================================================== UI
+const SCR_HOME = 0, SCR_MODE = 1, SCR_VACATION = 2, SCR_PROGRAM = 3, SCR_PERIOD = 4, SCR_COPY = 5,
+  SCR_CHART = 6, SCR_MENU = 7, SCR_LIST = 8, SCR_EDIT = 9, SCR_CONFIRM = 10, SCR_AP = 11;
+let scr = SCR_HOME, needFull = true, lastInput = performance.now(), dimmed = false, locked = false;
+let touchDown = false, touchStart = 0, lastRepeat = 0, tx = 0, ty = 0, wakeTouch = false;
+let toastMsg = '', toastUntil = 0, apMode = false;
+let progDay = 0, periodIdx = -1, perStart = 0, perEnd = 0, vacDaysEdit = 7, vacTempEdit = 150;
+let catIdx = 0, listPage = 0, paramIdx = 0, editVal = 0, confirmParam = null, confirmReturn = SCR_LIST;
+
+const DAY_SHORT = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"];
+const DAY_ABBR = ["pon", "wt", "śr", "czw", "pt", "sob", "nd"];
+const MONTH_ABBR = ["sty", "lut", "mar", "kwi", "maj", "cze", "lip", "sie", "wrz", "paź", "lis", "gru"];
+const go = s => { scr = s; needFull = true; };
+function uiToast(m) { toastMsg = m; toastUntil = performance.now() + 2000; needFull = true; }
+const fmtTemp = (t10, deg = true) => `${t10 < 0 ? '-' : ''}${Math.floor(Math.abs(t10) / 10)},${Math.abs(t10) % 10}${deg ? '°' : ''}`;
+const fmtHM = m => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+function modeColor(src) {
+  switch (src) {
+    case SRC.COMFORT: case SRC.OVERRIDE: case SRC.MANUAL: return C.COMFORT;
+    case SRC.ECO: return C.ECO; case SRC.FROST: case SRC.WINDOW: return C.FROST;
+    case SRC.VACATION: return C.VAC; case SRC.BOOST: return C.BOOST; case SRC.FAULT: return C.ALARM;
+  }
+  return C.TEXT;
+}
+function header(title, back = true) {
+  lcd.fillRect(0, 0, W, 48, C.PANEL);
+  if (back) iconChevron(26, 24, 'l', C.TEXT);
+  text(back ? 56 : 16, 24 - Math.floor(ASC[F_B] / 2), title, F_B, C.TEXT, C.PANEL);
+}
+const R_BACK = R(0, 0, 120, 48);
+
+// ------------------------------------------------------------------ HOME
+const R_PLUS = R(324, 56, 132, 56), R_MINUS = R(324, 186, 132, 56), R_CHIP = R(16, 174, 290, 38);
+const R_NAV = [R(16, 262, 108, 50), R(132, 262, 108, 50), R(248, 262, 108, 50), R(364, 262, 108, 50)];
+
+function homeModeLine() {
+  const t = local();
+  if (th.boost && cfg.mode !== MODE_OFF) return ["BOOST", ` · jeszcze ${Math.floor((thermoBoostLeftS() + 59) / 60)} min`];
+  switch (cfg.mode) {
+    case MODE_MANUAL: return ["RĘCZNY", " · stała temperatura"];
+    case MODE_ECO: return ["EKO", " · obniżona"];
+    case MODE_OFF: return ["WYŁĄCZONY", ` · ochrona ${fmtTemp(cfg.tFrost)}`];
+    case MODE_VACATION: {
+      const e = new Date(cfg.vacUntil * 1000);
+      return ["URLOP", cfg.vacUntil ? ` · do ${e.getDate()} ${MONTH_ABBR[e.getMonth()]}, ${pad2(e.getHours())}:${pad2(e.getMinutes())}` : ""];
+    }
+    default: {
+      const what = th.override ? "zmiana chwilowa" : (th.source === SRC.COMFORT ? "komfort" : "eko");
+      const n = scheduleNextChange(dowOf(t), t.getHours() * 60 + t.getMinutes());
+      return ["AUTO", n ? ` · ${what} do ${n.off === 0 ? '' : n.off === 1 ? 'jutra ' : ''}${fmtHM(n.at)}` : ` · ${what}`];
+    }
+  }
+}
+function homeChip() {
+  if (sensor.fault) return [3, cfg.faultMode === FAULT_DUTY ? `Awaria czujnika · praca ${cfg.faultDuty}%` : "Awaria czujnika · grzanie wył."];
+  if (th.windowOpen) return [2, `Okno otwarte · ${Math.floor((th.windowEnd - simMs) / 60000) + 1} min`];
+  if (th.testOutput) return [5, "Test wyjścia"];
+  if (th.antiBlock) return [4, "Ochrona zaworu"];
+  if (th.heating) return [1, cfg.algo === ALGO_TPI ? `Grzanie · ${Math.round(th.duty * 100)}%` : "Grzanie"];
+  return [0, "Czuwanie"];
+}
+function drawHome() {
+  const t = local();
+  lcd.fillScreen(C.BG);
+  text(24, 52, "W pomieszczeniu", F_S, C.MUTED, C.BG);
+  lcd.fillRoundRect(316, 48, 148, 202, 14, C.PANEL);
+  textMid(390, 128, "Zadana", F_S, C.MUTED, C.PANEL, AL_C);
+  ["Tryb", "Program", "Wykres", "Menu"].forEach((l, i) => {
+    const r = R_NAV[i], cx = r.x + 26, cy = r.y + r.h / 2;
+    lcd.fillRoundRect(r.x, r.y, r.w, r.h, 10, C.PANEL);
+    [() => iconMode(cx, cy, C.TEXT, C.PANEL), () => iconCalendar(cx, cy, C.TEXT, C.PANEL), () => iconChart(cx, cy, C.TEXT), () => iconMenu(cx, cy, C.TEXT)][i]();
+    textMid(r.x + 44, cy, l, F_M, C.TEXT, C.PANEL);
+  });
+  text(16, 8, clockOk ? `${pad2(t.getHours())}:${pad2(t.getMinutes())}` : "--:--", F_B, C.TEXT, C.BG);
+  text(92, 14, `${DAY_ABBR[dowOf(t)]}, ${t.getDate()} ${MONTH_ABBR[t.getMonth()]}`, F_S, C.MUTED, C.BG);
+  let x = 452;
+  if (cfg.wifiEnable) { iconWifi(x, 18, apMode ? 2 : (cfg.ssid ? 2 : 0), apMode ? C.VAC : C.TEXT, C.LINE); x -= 34; }
+  if (cfg.childLock) { iconLock(x, 18, locked ? C.COMFORT : C.MUTED, C.BG); x -= 30; }
+  if (sensor.fault) iconWarn(x, 20, C.ALARM, C.BG);
+  const ts = sensor.fault || isNaN(sensor.value) ? "--,-" : fmtTemp(Math.round(sensor.value * 10), false);
+  const w = text(20, 78, ts, F_BIG, sensor.fault ? C.ALARM : C.TEXT, C.BG);
+  text(20 + w + 6, 82, "°C", F_B, C.MUTED, C.BG);
+  const [kind, chip] = homeChip();
+  const bg = kind === 1 ? 0x3A2216 : kind === 3 ? 0x3A1A1D : kind === 2 ? 0x173740 : C.PANEL;
+  const fg = kind === 1 ? C.HEAT : kind === 3 ? C.ALARM : kind === 2 ? C.FROST : kind === 0 ? C.MUTED : C.COMFORT;
+  lcd.fillRoundRect(R_CHIP.x + 4, R_CHIP.y, Math.min(R_CHIP.w, textW(chip, F_M) + 52), R_CHIP.h, 19, bg);
+  const ix = R_CHIP.x + 24, iy = R_CHIP.y + R_CHIP.h / 2;
+  if (kind === 1) iconFlame(ix, iy, C.HEAT, bg); else if (kind === 2) iconWindow(ix, iy, C.FROST); else if (kind === 3) iconWarn(ix, iy, C.ALARM, bg); else lcd.fillCircle(ix, iy, 5, fg);
+  textMid(R_CHIP.x + 42, iy, chip, F_M, fg, bg);
+  const [name, rest] = homeModeLine();
+  const mc = th.boost ? C.BOOST : cfg.mode === MODE_OFF ? C.FROST : cfg.mode === MODE_VACATION ? C.VAC : cfg.mode === MODE_ECO ? C.ECO : C.COMFORT;
+  const nw = text(24, 226, name, F_M, mc, C.BG);
+  text(24 + nw, 226, rest, F_M, C.MUTED, C.BG);
+  const can = thermoCanAdjust();
+  textMid(390, 162, fmtTemp(th.target), F_XL, modeColor(th.source), C.PANEL, AL_C);
+  button(R_PLUS, null, C.PANEL2); button(R_MINUS, null, C.PANEL2);
+  iconPlus(R_PLUS.x + R_PLUS.w / 2, R_PLUS.y + R_PLUS.h / 2, can ? C.TEXT : C.LINE);
+  iconMinus(R_MINUS.x + R_MINUS.w / 2, R_MINUS.y + R_MINUS.h / 2, can ? C.TEXT : C.LINE);
+}
+function touchHome(x, y, repeat) {
+  if (R_PLUS.hit(x, y) || R_MINUS.hit(x, y)) {
+    if (!thermoCanAdjust()) { if (!repeat) uiToast(cfg.mode === MODE_OFF ? "Tryb WYŁĄCZONY – zmień tryb" : "Awaria czujnika"); return; }
+    thermoAdjust(R_PLUS.hit(x, y) ? 5 : -5); needFull = true; return;
+  }
+  if (repeat) return;
+  if (R_CHIP.hit(x, y) && th.windowOpen) { thermoCancelWindow(); uiToast("Grzanie wznowione"); return; }
+  if (R_NAV[0].hit(x, y)) go(SCR_MODE);
+  if (R_NAV[1].hit(x, y)) { progDay = dowOf(local()); go(SCR_PROGRAM); }
+  if (R_NAV[2].hit(x, y)) go(SCR_CHART);
+  if (R_NAV[3].hit(x, y)) go(SCR_MENU);
+}
+
+// ------------------------------------------------------------------ TRYB
+const modeTile = i => R(16 + (i % 3) * 152, 60 + Math.floor(i / 3) * 102, 144, 94);
+function drawMode() {
+  lcd.fillScreen(C.BG); header("Tryb pracy");
+  const names = ["AUTO", "RĘCZNY", "EKO", "WYŁĄCZ", "URLOP", "BOOST"];
+  const d = ["wg programu", `stała ${fmtTemp(cfg.tManual)}`, `obniżona ${fmtTemp(cfg.tEco)}`, `tylko ochrona ${fmtTemp(cfg.tFrost)}`, "nieobecność",
+    th.boost ? `aktywny · ${Math.floor((thermoBoostLeftS() + 59) / 60)} min` : `${cfg.boostMin} min`];
+  const col = [C.COMFORT, C.COMFORT, C.ECO, C.FROST, C.VAC, C.BOOST];
+  for (let i = 0; i < 6; i++) {
+    const r = modeTile(i), sel = (i < 5 && cfg.mode === i) || (i === 5 && th.boost);
+    lcd.fillRoundRect(r.x, r.y, r.w, r.h, 12, C.PANEL);
+    if (sel) for (let k = 0; k < 3; k++) lcd.drawRoundRect(r.x + k, r.y + k, r.w - 2 * k, r.h - 2 * k, 12 - k, col[i]);
+    const ix = r.x + 26, iy = r.y + 30;
+    [() => iconCalendar(ix, iy, col[i], C.PANEL), () => iconThermo(ix, iy, col[i], C.PANEL), () => iconMoon(ix, iy, col[i], C.PANEL),
+     () => iconSnow(ix, iy, col[i]), () => iconCase(ix, iy, col[i], C.PANEL), () => iconFlame(ix, iy, col[i], C.PANEL)][i]();
+    textMid(r.x + 48, iy, names[i], F_B, C.TEXT, C.PANEL);
+    text(r.x + 14, r.y + 62, d[i], F_S, C.MUTED, C.PANEL);
+    if (sel) iconCheck(r.x + r.w - 20, r.y + 20, col[i]);
+  }
+  text(240, 278, "Dotknij kafelka, aby zmienić tryb", F_S, C.MUTED, C.BG, AL_C);
+}
+function touchMode(x, y) {
+  if (R_BACK.hit(x, y)) return go(SCR_HOME);
+  for (let i = 0; i < 6; i++) {
+    if (!modeTile(i).hit(x, y)) continue;
+    if (i === 4) { vacDaysEdit = cfg.vacDays; vacTempEdit = cfg.tVacation; return go(SCR_VACATION); }
+    if (i === 5) {
+      if (cfg.mode === MODE_OFF) return uiToast("Boost niedostępny w trybie WYŁ.");
+      thermoBoost(!th.boost); uiToast(th.boost ? "Boost włączony" : "Boost wyłączony"); return go(SCR_HOME);
+    }
+    thermoSetMode(i); return go(SCR_HOME);
+  }
+}
+
+// ----------------------------------------------------------------- URLOP
+const R_VD_M = R(232, 66, 64, 56), R_VD_P = R(400, 66, 64, 56), R_VT_M = R(232, 136, 64, 56), R_VT_P = R(400, 136, 64, 56);
+const R_BTN_L = R(16, 256, 218, 52), R_BTN_R = R(246, 256, 218, 52);
+function drawVacation() {
+  lcd.fillScreen(C.BG); header("Urlop");
+  textMid(24, 94, "Liczba dni", F_M, C.TEXT, C.BG); textMid(24, 164, "Temperatura", F_M, C.TEXT, C.BG);
+  for (const r of [R_VD_M, R_VT_M]) { button(r, null, C.PANEL2); iconMinus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
+  for (const r of [R_VD_P, R_VT_P]) { button(r, null, C.PANEL2); iconPlus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
+  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Rozpocznij", C.VAC, C.BG);
+  textMid(348, 94, String(vacDaysEdit), F_XL, C.TEXT, C.BG, AL_C);
+  textMid(348, 164, fmtTemp(vacTempEdit), F_XL, C.VAC, C.BG, AL_C);
+  const e = new Date(clockNowMs() + vacDaysEdit * 86400000);
+  text(240, 214, `Powrót do AUTO: ${DAY_ABBR[dowOf(e)]} ${e.getDate()} ${MONTH_ABBR[e.getMonth()]}, ${pad2(e.getHours())}:${pad2(e.getMinutes())}`, F_S, C.MUTED, C.BG, AL_C);
+}
+function touchVacation(x, y, repeat) {
+  let ch = true;
+  if (R_VD_M.hit(x, y)) vacDaysEdit = Math.max(1, vacDaysEdit - 1);
+  else if (R_VD_P.hit(x, y)) vacDaysEdit = Math.min(60, vacDaysEdit + 1);
+  else if (R_VT_M.hit(x, y)) vacTempEdit = Math.max(cfg.tFrost, vacTempEdit - 5);
+  else if (R_VT_P.hit(x, y)) vacTempEdit = Math.min(250, vacTempEdit + 5);
+  else ch = false;
+  if (ch) { needFull = true; return; }
+  if (repeat) return;
+  if (R_BACK.hit(x, y) || R_BTN_L.hit(x, y)) return go(SCR_MODE);
+  if (R_BTN_R.hit(x, y)) { cfg.vacDays = vacDaysEdit; cfg.tVacation = vacTempEdit; thermoStartVacation(); uiToast("Tryb urlopowy włączony"); go(SCR_HOME); }
+}
+
+// --------------------------------------------------------------- PROGRAM
+const R_COPY = R(372, 6, 96, 36);
+const dayTab = i => R(16 + i * 64, 56, 58, 38);
+const periodRow = i => R(16, 158 + i * 38, 448, 34);
+function drawTimeline(x, y, w, h, d, hil, hs, he) {
+  lcd.fillRoundRect(x, y, w, h, 6, C.ECO_DK);
+  for (let i = 0; i < d.start.length; i++) {
+    const x0 = x + Math.floor(d.start[i] * w / 1440), x1 = x + Math.floor(d.end[i] * w / 1440);
+    lcd.fillRect(x0, y, Math.max(2, x1 - x0), h, i === hil ? C.LINE : C.COMFORT);
+  }
+  if (hil >= 0 || hil === -2) { const x0 = x + Math.floor(hs * w / 1440), x1 = x + Math.floor(he * w / 1440); lcd.fillRect(x0, y, Math.max(2, x1 - x0), h, C.HEAT); }
+  for (let hh = 3; hh < 24; hh += 3) lcd.drawFastVLine(x + Math.floor(hh * w / 24), y + h - 5, 5, C.BG);
+}
+function drawProgram() {
+  lcd.fillScreen(C.BG); header("Program tygodniowy");
+  button(R_COPY, "Kopiuj", C.PANEL2, C.TEXT, F_S);
+  const t = local(), today = dowOf(t);
+  for (let i = 0; i < 7; i++) {
+    const r = dayTab(i), sel = i === progDay, bg = sel ? C.COMFORT : C.PANEL;
+    lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, bg);
+    textMid(r.x + r.w / 2, r.y + r.h / 2, DAY_SHORT[i], F_M, sel ? C.BG : C.TEXT, bg, AL_C);
+    if (i === today) lcd.fillRect(r.x + 20, r.y + r.h - 5, 18, 3, sel ? C.BG : C.COMFORT);
+  }
+  const d = cfg.week[progDay];
+  drawTimeline(16, 102, 448, 26, d, -1, 0, 0);
+  if (today === progDay) lcd.fillRect(16 + Math.floor((t.getHours() * 60 + t.getMinutes()) * 448 / 1440) - 1, 98, 3, 34, C.TEXT);
+  ["0", "6", "12", "18", "24"].forEach((l, i) => text(16 + i * 112, 134, l, F_S, C.MUTED, C.BG, i === 0 ? AL_L : i === 4 ? AL_R : AL_C));
+  const n = d.start.length;
+  for (let i = 0; i < MAX_PERIODS; i++) {
+    const r = periodRow(i);
+    if (i < n) {
+      lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, C.PANEL);
+      lcd.fillRoundRect(r.x + 10, r.y + 9, 16, 16, 4, C.COMFORT);
+      textMid(r.x + 40, r.y + r.h / 2, `${fmtHM(d.start[i])} – ${fmtHM(d.end[i])}`, F_M, C.TEXT, C.PANEL);
+      textMid(r.x + r.w - 34, r.y + r.h / 2, "Edytuj", F_S, C.MUTED, C.PANEL, AL_R);
+      iconChevron(r.x + r.w - 18, r.y + r.h / 2, 'r', C.MUTED);
+    } else if (i === n) {
+      lcd.drawRoundRect(r.x, r.y, r.w, r.h, 8, C.LINE);
+      iconPlus(r.x + 22, r.y + r.h / 2, C.MUTED);
+      textMid(r.x + 44, r.y + r.h / 2, n === 0 ? "Dodaj okres komfortu (teraz cały dzień Eko)" : "Dodaj okres komfortu", F_M, C.MUTED, C.BG);
+    }
+  }
+}
+function touchProgram(x, y) {
+  if (R_BACK.hit(x, y)) return go(SCR_HOME);
+  if (R_COPY.hit(x, y)) return go(SCR_COPY);
+  for (let i = 0; i < 7; i++) if (dayTab(i).hit(x, y)) { progDay = i; return go(SCR_PROGRAM); }
+  const d = cfg.week[progDay], n = d.start.length;
+  for (let i = 0; i < MAX_PERIODS; i++) {
+    if (!periodRow(i).hit(x, y)) continue;
+    if (i < n) { periodIdx = i; perStart = d.start[i]; perEnd = d.end[i]; go(SCR_PERIOD); }
+    else if (i === n) { periodIdx = -1; perStart = n ? Math.min(1380, d.end[n - 1] + 60) : 1020; perEnd = Math.min(1440, perStart + 120); go(SCR_PERIOD); }
+    return;
+  }
+}
+const R_PS_M = R(232, 62, 64, 56), R_PS_P = R(400, 62, 64, 56), R_PE_M = R(232, 128, 64, 56), R_PE_P = R(400, 128, 64, 56);
+const R_P_DEL = R(16, 256, 140, 52), R_P_CAN = R(170, 256, 140, 52), R_P_OK = R(324, 256, 140, 52);
+function drawPeriod() {
+  lcd.fillScreen(C.BG);
+  header(periodIdx >= 0 ? `${DAYS[progDay]} · okres ${periodIdx + 1}` : `${DAYS[progDay]} · nowy okres`);
+  textMid(24, 90, "Początek", F_M, C.TEXT, C.BG); textMid(24, 156, "Koniec", F_M, C.TEXT, C.BG);
+  for (const r of [R_PS_M, R_PE_M]) { button(r, null, C.PANEL2); iconMinus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
+  for (const r of [R_PS_P, R_PE_P]) { button(r, null, C.PANEL2); iconPlus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
+  text(16, 232, "Krok 15 min · przytrzymaj, aby przewijać", F_S, C.MUTED, C.BG);
+  if (periodIdx >= 0) button(R_P_DEL, "Usuń", 0x3A1A1D, C.ALARM);
+  button(R_P_CAN, "Anuluj", C.PANEL2, C.TEXT); button(R_P_OK, "Zapisz", C.COMFORT, C.BG);
+  textMid(348, 90, fmtHM(perStart), F_XL, C.TEXT, C.BG, AL_C);
+  textMid(348, 156, fmtHM(perEnd), F_XL, C.TEXT, C.BG, AL_C);
+  drawTimeline(16, 204, 448, 22, cfg.week[progDay], periodIdx >= 0 ? periodIdx : -2, perStart, perEnd);
+}
+function touchPeriod(x, y, repeat) {
+  let ch = true;
+  if (R_PS_M.hit(x, y)) { if (perStart >= 15) perStart -= 15; }
+  else if (R_PS_P.hit(x, y)) { if (perStart <= 1410) { perStart += 15; if (perEnd < perStart + 15) perEnd = perStart + 15; } }
+  else if (R_PE_M.hit(x, y)) { if (perEnd >= perStart + 30) perEnd -= 15; }
+  else if (R_PE_P.hit(x, y)) { if (perEnd <= 1425) perEnd += 15; }
+  else ch = false;
+  if (ch) { needFull = true; return; }
+  if (repeat) return;
+  const d = cfg.week[progDay];
+  if (R_BACK.hit(x, y) || R_P_CAN.hit(x, y)) return go(SCR_PROGRAM);
+  if (R_P_DEL.hit(x, y) && periodIdx >= 0) { d.end[periodIdx] = d.start[periodIdx]; scheduleSort(d); return go(SCR_PROGRAM); }
+  if (R_P_OK.hit(x, y)) {
+    if (periodIdx < 0) { if (d.start.length >= MAX_PERIODS) return go(SCR_PROGRAM); periodIdx = d.start.length; }
+    d.start[periodIdx] = perStart; d.end[periodIdx] = perEnd; scheduleSort(d);
+    uiToast("Zapisano"); go(SCR_PROGRAM);
+  }
+}
+const R_CP = [R(16, 104, 448, 52), R(16, 166, 448, 52), R(16, 228, 448, 52)];
+function drawCopy() {
+  lcd.fillScreen(C.BG); header(`Kopiuj: ${DAYS[progDay]}`);
+  text(16, 66, "Skopiuj program tego dnia do:", F_M, C.MUTED, C.BG);
+  ["Dni robocze (Pn–Pt)", "Weekend (So–Nd)", "Wszystkie dni"].forEach((l, i) => button(R_CP[i], l, C.PANEL2, C.TEXT));
+}
+function touchCopy(x, y) {
+  if (R_BACK.hit(x, y)) return go(SCR_PROGRAM);
+  for (let i = 0; i < 3; i++) {
+    if (!R_CP[i].hit(x, y)) continue;
+    const from = i === 1 ? 5 : 0, to = i === 0 ? 4 : 6, src = cfg.week[progDay];
+    for (let dd = from; dd <= to; dd++) if (dd !== progDay) cfg.week[dd] = { start: [...src.start], end: [...src.end] };
+    uiToast("Skopiowano"); return go(SCR_PROGRAM);
+  }
+}
+
+// ----------------------------------------------------------------- WYKRES
+const fmtDur = s => { const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return h ? `${h} h ${m} m` : `${m} min`; };
+function drawChart() {
+  lcd.fillScreen(C.BG); header("Historia 24 h");
+  lcd.fillRect(300, 22, 16, 3, C.TEXT); text(320, 16, "temp.", F_S, C.MUTED, C.PANEL);
+  lcd.fillRect(372, 22, 16, 3, C.COMFORT); text(392, 16, "zadana", F_S, C.MUTED, C.PANEL);
+  const X0 = 56, X1 = 464, Y0 = 60, Y1 = 214, n = th.histCount;
+  if (n < 2) text(260, 130, "Brak danych – próbka co 5 minut", F_M, C.MUTED, C.BG, AL_C);
+  else {
+    let mn = 1e9, mx = -1e9;
+    const idx = i => (th.histHead - n + i + HISTORY_LEN) % HISTORY_LEN;
+    for (let i = 0; i < n; i++) { const v = th.histTemp[idx(i)], s = th.histTarget[idx(i)]; if (v !== null) { mn = Math.min(mn, v); mx = Math.max(mx, v); } mn = Math.min(mn, s); mx = Math.max(mx, s); }
+    const lo = Math.trunc(mn / 10) - 1; let hi = Math.trunc((mx + 9) / 10) + 1; if (hi - lo < 4) hi = lo + 4;
+    const stepG = hi - lo > 8 ? 2 : 1;
+    for (let g = lo; g <= hi; g += stepG) { const y = Y1 - Math.floor((g - lo) * (Y1 - Y0) / (hi - lo)); lcd.drawFastHLine(X0, y, X1 - X0, C.PANEL2); textMid(X0 - 8, y, g + "°", F_S, C.MUTED, C.BG, AL_R); }
+    const px = i => X0 + Math.floor((HISTORY_LEN - n + i) * (X1 - X0) / (HISTORY_LEN - 1));
+    const py = v => Y1 - Math.floor((v - lo * 10) * (Y1 - Y0) / ((hi - lo) * 10));
+    let prevX = -1, prevY = 0, prevS = 0;
+    for (let i = 0; i < n; i++) {
+      const k = idx(i), x = px(i), h = th.histHeat[k];
+      if (h > 0) lcd.fillRect(x - 1, 222, 3, 10, h >= 50 ? C.HEAT : 0x7A3A1E);
+      const sy = py(th.histTarget[k]);
+      if (i > 0) { lcd.drawFastHLine(px(i - 1), prevS, x - px(i - 1), C.COMFORT); lcd.fillRect(x, Math.min(prevS, sy), 1, Math.abs(sy - prevS) + 1, C.COMFORT); }
+      prevS = sy;
+      const v = th.histTemp[k];
+      if (v === null) { prevX = -1; continue; }
+      const y = py(v);
+      if (prevX >= 0) lcd.drawWideLine(prevX, prevY, x, y, 1.0, C.TEXT);
+      prevX = x; prevY = y;
+    }
+  }
+  ["−24 h", "−18 h", "−12 h", "−6 h", "teraz"].forEach((l, i) => text(X0 + Math.floor(i * (X1 - X0) / 4), 236, l, F_S, C.MUTED, C.BG, i === 0 ? AL_L : i === 4 ? AL_R : AL_C));
+  const v = [fmtDur(th.heatSecToday), fmtDur(th.heatSecYesterday), fmtDur(th.weekMinutes.reduce((a, b) => a + b, 0) * 60), String(th.cyclesToday)];
+  ["Grzanie dziś", "Wczoraj", "7 dni", "Załączeń dziś"].forEach((l, i) => {
+    const r = R_NAV[i]; lcd.fillRoundRect(r.x, r.y, r.w, r.h, 10, C.PANEL);
+    text(r.x + 10, r.y + 6, l, F_S, C.MUTED, C.PANEL); text(r.x + 10, r.y + 25, v[i], F_M, C.TEXT, C.PANEL);
+  });
+}
+
+// ------------------------------------------------------------------- MENU
+const catTile = i => R(16 + (i % 2) * 228, 58 + Math.floor(i / 2) * 50, 220, 44);
+function drawMenu() {
+  lcd.fillScreen(C.BG); header("Ustawienia");
+  CATEGORIES.forEach((c, i) => { const r = catTile(i); lcd.fillRoundRect(r.x, r.y, r.w, r.h, 10, C.PANEL); textMid(r.x + 16, r.y + r.h / 2, c.name, F_M, C.TEXT, C.PANEL); iconChevron(r.x + r.w - 20, r.y + r.h / 2, 'r', C.MUTED); });
+}
+function touchMenu(x, y) {
+  if (R_BACK.hit(x, y)) return go(SCR_HOME);
+  CATEGORIES.forEach((c, i) => { if (catTile(i).hit(x, y)) { catIdx = i; listPage = 0; go(SCR_LIST); } });
+}
+const ROWS = 5, R_UP = R(16, 274, 120, 40), R_DN = R(344, 274, 120, 40);
+const listRow = i => R(16, 54 + i * 44, 448, 40);
+function drawList() {
+  lcd.fillScreen(C.BG);
+  const c = CATEGORIES[catIdx]; header(c.name);
+  const pages = Math.ceil(c.params.length / ROWS); if (listPage >= pages) listPage = 0;
+  for (let i = 0; i < ROWS; i++) {
+    const pi = listPage * ROWS + i; if (pi >= c.params.length) break;
+    const p = c.params[pi], r = listRow(i);
+    lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, C.PANEL);
+    textMid(r.x + 14, r.y + r.h / 2, p.name, F_M, C.TEXT, C.PANEL);
+    const val = (p.type === P_INFO || p.type === P_ACTION) ? 0 : p.get();
+    const editable = p.type !== P_INFO;
+    let vc = p.type === P_INFO ? C.MUTED : (p.type === P_BOOL ? (val ? C.OK : C.MUTED) : C.COMFORT);
+    textMid(r.x + r.w - (editable ? 34 : 14), r.y + r.h / 2, paramFormat(p, val), F_M, vc, C.PANEL, AL_R);
+    if (editable) iconChevron(r.x + r.w - 18, r.y + r.h / 2, 'r', C.MUTED);
+  }
+  if (pages > 1) {
+    button(R_UP, null, C.PANEL2); iconChevron(R_UP.x + R_UP.w / 2, R_UP.y + R_UP.h / 2, 'u', listPage > 0 ? C.TEXT : C.LINE);
+    button(R_DN, null, C.PANEL2); iconChevron(R_DN.x + R_DN.w / 2, R_DN.y + R_DN.h / 2, 'd', listPage < pages - 1 ? C.TEXT : C.LINE);
+    textMid(240, 294, `${listPage + 1} / ${pages}`, F_M, C.MUTED, C.BG, AL_C);
+  }
+}
+function touchList(x, y) {
+  if (R_BACK.hit(x, y)) return go(SCR_MENU);
+  const c = CATEGORIES[catIdx], pages = Math.ceil(c.params.length / ROWS);
+  if (pages > 1 && R_UP.hit(x, y)) { if (listPage > 0) { listPage--; go(SCR_LIST); } return; }
+  if (pages > 1 && R_DN.hit(x, y)) { if (listPage < pages - 1) { listPage++; go(SCR_LIST); } return; }
+  for (let i = 0; i < ROWS; i++) {
+    const pi = listPage * ROWS + i;
+    if (pi >= c.params.length || !listRow(i).hit(x, y)) continue;
+    const p = c.params[pi]; paramIdx = pi;
+    if (p.type === P_BOOL) { p.set(p.get() ? 0 : 1); go(SCR_LIST); }
+    else if (p.type === P_NUM || p.type === P_ENUM) { editVal = p.get(); go(SCR_EDIT); }
+    else if (p.type === P_ACTION) { if (p.confirm) { confirmParam = p; confirmReturn = scr; go(SCR_CONFIRM); } else { p.action(); if (scr === SCR_LIST) go(SCR_LIST); } }
+    return;
+  }
+}
+const R_E_M = R(16, 70, 112, 84), R_E_P = R(352, 70, 112, 84);
+function wrapText(x, y, w, s, f, c, lh, maxL) {
+  const words = s.split(' '); let line = '', lines = 0;
+  for (const wd of words) {
+    const trial = line ? line + ' ' + wd : wd;
+    if (textW(trial, f) > w && line) { if (lines < maxL) text(x, y + lines * lh, line, f, c, C.BG); lines++; line = wd; } else line = trial;
+  }
+  if (line && lines < maxL) text(x, y + lines * lh, line, f, c, C.BG);
+}
+function drawEdit() {
+  const p = CATEGORIES[catIdx].params[paramIdx];
+  lcd.fillScreen(C.BG); header(p.name);
+  button(R_E_M, null, C.PANEL2); button(R_E_P, null, C.PANEL2);
+  text(240, 166, p.type === P_ENUM ? `Opcje: ${p.opts.length}` : `Zakres: ${paramFormat(p, p.min)} … ${paramFormat(p, p.max)}`, F_S, C.MUTED, C.BG, AL_C);
+  if (p.help) wrapText(24, 192, 432, p.help, F_S, C.TEXT, 20, 3);
+  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Zapisz", C.COMFORT, C.BG);
+  const v = paramFormat(p, editVal), f = textW(v, F_XL) > 216 ? F_B : F_XL;
+  textMid(240, 112, v, f, C.COMFORT, C.BG, AL_C);
+  iconMinus(R_E_M.x + R_E_M.w / 2, R_E_M.y + R_E_M.h / 2, editVal > p.min ? C.TEXT : C.LINE);
+  iconPlus(R_E_P.x + R_E_P.w / 2, R_E_P.y + R_E_P.h / 2, editVal < p.max ? C.TEXT : C.LINE);
+}
+function touchEdit(x, y, repeat, held) {
+  const p = CATEGORIES[catIdx].params[paramIdx];
+  const step = p.step * (held > 2500 && p.type === P_NUM && (p.max - p.min) / p.step > 50 ? 5 : 1);
+  if (R_E_M.hit(x, y)) { editVal = p.type === P_ENUM ? (editVal > p.min ? editVal - 1 : (repeat ? editVal : p.max)) : Math.max(p.min, editVal - step); needFull = true; return; }
+  if (R_E_P.hit(x, y)) { editVal = p.type === P_ENUM ? (editVal < p.max ? editVal + 1 : (repeat ? editVal : p.min)) : Math.min(p.max, editVal + step); needFull = true; return; }
+  if (repeat) return;
+  if (R_BACK.hit(x, y) || R_BTN_L.hit(x, y)) return go(SCR_LIST);
+  if (R_BTN_R.hit(x, y)) { p.set(editVal); uiToast("Zapisano"); go(SCR_LIST); }
+}
+function drawConfirm() {
+  lcd.fillScreen(C.BG); header("Potwierdź", false);
+  if (confirmParam) { textMid(240, 110, confirmParam.name, F_B, C.TEXT, C.BG, AL_C); if (confirmParam.help) wrapText(40, 150, 400, confirmParam.help, F_S, C.MUTED, 20, 3); }
+  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Wykonaj", C.ALARM, C.BG);
+}
+function touchConfirm(x, y) {
+  if (R_BTN_L.hit(x, y)) return go(confirmReturn);
+  if (R_BTN_R.hit(x, y) && confirmParam) { go(confirmReturn); confirmParam.action(); }
+}
+function drawAp() {
+  lcd.fillScreen(C.BG); header("Konfiguracja Wi-Fi", false);
+  text(24, 64, "1. Połącz telefon z siecią:", F_M, C.MUTED, C.BG);
+  text(48, 90, "Termostat-1A2B", F_B, C.VAC, C.BG);
+  text(48, 122, "hasło: termostat", F_M, C.TEXT, C.BG);
+  text(24, 156, "2. Otwórz w przeglądarce:", F_M, C.MUTED, C.BG);
+  text(48, 182, "http://192.168.4.1", F_B, C.VAC, C.BG);
+  text(24, 218, "3. Wpisz nazwę i hasło sieci domowej.", F_M, C.MUTED, C.BG);
+  button(R_BTN_R, "Zakończ", C.PANEL2, C.TEXT);
+}
+function drawToast() {
+  const w = textW(toastMsg, F_M) + 40, x = (W - w) / 2;
+  lcd.fillRoundRect(x, 212, w, 40, 20, C.TEXT);
+  textMid(W / 2, 232, toastMsg, F_M, C.BG, C.TEXT, AL_C);
+}
+function drawScreen() {
+  [drawHome, drawMode, drawVacation, drawProgram, drawPeriod, drawCopy, drawChart, drawMenu, drawList, drawEdit, drawConfirm, drawAp][scr]();
+}
+function handleTouch(x, y, repeat, held) {
+  switch (scr) {
+    case SCR_HOME: return touchHome(x, y, repeat);
+    case SCR_MODE: if (!repeat) touchMode(x, y); return;
+    case SCR_VACATION: return touchVacation(x, y, repeat);
+    case SCR_PROGRAM: if (!repeat) touchProgram(x, y); return;
+    case SCR_PERIOD: return touchPeriod(x, y, repeat);
+    case SCR_COPY: if (!repeat) touchCopy(x, y); return;
+    case SCR_CHART: if (!repeat && R_BACK.hit(x, y)) go(SCR_HOME); return;
+    case SCR_MENU: if (!repeat) touchMenu(x, y); return;
+    case SCR_LIST: if (!repeat) touchList(x, y); return;
+    case SCR_EDIT: return touchEdit(x, y, repeat, held);
+    case SCR_CONFIRM: if (!repeat) touchConfirm(x, y); return;
+    case SCR_AP: if (!repeat && R_BTN_R.hit(x, y)) { apMode = false; go(SCR_LIST); } return;
+  }
+}
+function isStepper(x, y) {
+  switch (scr) {
+    case SCR_HOME: return R_PLUS.hit(x, y) || R_MINUS.hit(x, y);
+    case SCR_VACATION: return [R_VD_M, R_VD_P, R_VT_M, R_VT_P].some(r => r.hit(x, y));
+    case SCR_PERIOD: return [R_PS_M, R_PS_P, R_PE_M, R_PE_P].some(r => r.hit(x, y));
+    case SCR_EDIT: return R_E_M.hit(x, y) || R_E_P.hit(x, y);
+  }
+  return false;
+}
+function wake() { lastInput = performance.now(); dimmed = false; }
+
+// ------------------------------------------------------------------ dotyk
+let pointer = null;
+function toLcd(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height }; }
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pointer = toLcd(e); onPress(); e.preventDefault(); });
+canvas.addEventListener('pointerup', () => { pointer = null; touchDown = false; wakeTouch = false; });
+canvas.addEventListener('pointercancel', () => { pointer = null; touchDown = false; wakeTouch = false; });
+function onPress() {
+  const now = performance.now();
+  touchDown = true; touchStart = lastRepeat = now; tx = pointer.x; ty = pointer.y; lastInput = now;
+  if (dimmed) { wake(); wakeTouch = true; if (scr !== SCR_HOME) go(SCR_HOME); needFull = true; }
+  else if (locked) uiToast("Zablokowane – przytrzymaj 3 s");
+  else handleTouch(tx, ty, false, 0);
+}
+
+// ================================================================= pulpit
+const $ = id => document.getElementById(id);
+let speed = 30;
+$('speed').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  speed = +b.dataset.v;
+  for (const x of $('speed').children) x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+});
+$('tout').addEventListener('input', e => { room.Tout = +e.target.value; $('toutV').textContent = e.target.value + ' °C'; });
+$('bWin').addEventListener('click', () => { room.window = !room.window; $('bWin').setAttribute('aria-pressed', room.window); $('bWin').textContent = room.window ? 'Zamknij okno' : 'Otwórz okno'; });
+$('bFault').addEventListener('click', () => { room.sensorUnplugged = !room.sensorUnplugged; $('bFault').setAttribute('aria-pressed', room.sensorUnplugged); $('bFault').textContent = room.sensorUnplugged ? 'Podłącz czujnik' : 'Odłącz czujnik'; });
+$('bBoot').addEventListener('click', () => { wake(); needFull = true; });
+$('bReset').addEventListener('click', reset);
+
+function updatePanel() {
+  const low = !th.outputLevel;
+  const pin = $('pin'); pin.textContent = th.outputLevel ? 'HIGH' : 'LOW'; pin.classList.toggle('low', low);
+  const energized = cfg.outActiveLow ? low : !low;
+  $('relay').textContent = energized ? 'Przekaźnik załączony' : 'Przekaźnik wyłączony';
+  $('valve').textContent = `GPIO3 · głowica ${th.heating ? 'otwarta' : 'zamknięta'} (${Math.round(room.valve * 100)}%)`;
+  $('rTemp').textContent = room.T.toFixed(2) + ' °C';
+  $('rSet').textContent = fmtTemp(th.target).replace('°', ' °C');
+  $('rRad').textContent = room.rad.toFixed(1) + ' °C';
+  $('rToday').textContent = fmtDur(th.heatSecToday);
+  const t = local();
+  $('simclock').textContent = `${DAY_ABBR[dowOf(t)]} ${t.getDate()} ${MONTH_ABBR[t.getMonth()]} ${pad2(t.getHours())}:${pad2(t.getMinutes())}:${pad2(t.getSeconds())}`;
+  $('rgb').style.background = sensor.fault ? 'var(--alarm)' : th.heating ? 'var(--heat)' : 'var(--ok)';
+}
+
+// =============================================================== pętla
+function reset() {
+  cfg = defaults();
+  Object.assign(room, { T: 19.6, rad: 21, valve: 0, window: false, sensorUnplugged: false, Tout: +$('tout').value });
+  $('bWin').setAttribute('aria-pressed', 'false'); $('bWin').textContent = 'Otwórz okno';
+  $('bFault').setAttribute('aria-pressed', 'false'); $('bFault').textContent = 'Odłącz czujnik';
+  Object.assign(sensor, { present: true, fault: false, raw: NaN, value: NaN, errors: 0, bad: 0, last: -99999 });
+  Object.assign(th, { boost: false, override: false, windowOpen: false, antiBlock: false, testOutput: false, heating: false, demand: false,
+    heatSecToday: 0, heatSecYesterday: 0, cyclesToday: 0, weekMinutes: [0, 0, 0, 0, 0, 0, 0], histCount: 0, histHead: 0 });
+  th.histTemp.fill(null);
+  stats.relayCycles = 0; stats.heatSecondsTotal = 0;
+  simMs = 0; lastSwitch = -3600000; cycleStart = 0; lastYday = -1; histSecs = histHeatSecs = 0; winBuf = [];
+  // rozgrzewka: 24 h historii przed „teraz”, żeby wykres i statystyki miały dane
+  epoch0 = Date.now() - 24 * 3600 * 1000;
+  for (let i = 0; i < 24 * 3600; i++) simStep();
+  scr = SCR_HOME; needFull = true; lastInput = performance.now(); dimmed = false; locked = false;
+}
+
+let lastFrame = performance.now(), simAcc = 0, lastHome = 0;
+function frame(now) {
+  const dt = Math.min(0.25, (now - lastFrame) / 1000); lastFrame = now;
+  simAcc += dt * speed;
+  let steps = 0;
+  while (simAcc >= 1 && steps < 2000) { simStep(); simAcc -= 1; steps++; }
+
+  if (pointer && touchDown && !wakeTouch) {
+    const held = now - touchStart; lastInput = now;
+    if (locked) { if (held > 3000) { locked = false; wakeTouch = true; uiToast("Odblokowano"); } }
+    else if (isStepper(tx, ty) && held > 500 && now - lastRepeat > 110) { lastRepeat = now; handleTouch(tx, ty, true, held); }
+  }
+  const idle = now - lastInput;
+  if (!dimmed && cfg.dimAfter && idle > cfg.dimAfter * 1000) { dimmed = true; if (cfg.childLock) locked = true; if (scr !== SCR_HOME && scr !== SCR_AP) go(SCR_HOME); needFull = true; }
+  if (idle > 60000 && scr !== SCR_HOME && scr !== SCR_AP) go(SCR_HOME);
+  if (!cfg.childLock) locked = false;
+  if (toastUntil && now >= toastUntil) { toastUntil = 0; needFull = true; }
+  if (scr === SCR_HOME && now - lastHome > 250) { lastHome = now; needFull = true; }
+  if (needFull) {
+    needFull = false;
+    drawScreen();
+    if (toastUntil) drawToast();
+    const b = dimmed ? cfg.dimBrightness : cfg.brightness;
+    if (b < 100) { ctx.fillStyle = `rgba(0,0,0,${(1 - Math.max(b, 3) / 100) * 0.6})`; ctx.fillRect(0, 0, W, H); }
+  }
+  updatePanel();
+  requestAnimationFrame(frame);
+}
+
+reset();
+const fontsReady = document.fonts ? Promise.all(FONT.map(f => document.fonts.load(f, 'ĄŁ0'))) : Promise.resolve();
+fontsReady.catch(() => {}).finally(() => { needFull = true; requestAnimationFrame(frame); });
+window.addEventListener('resize', () => { needFull = true; });
+</script>
