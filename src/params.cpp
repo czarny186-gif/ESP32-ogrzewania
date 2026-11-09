@@ -136,9 +136,14 @@ static struct tm editTime() {
   return t;
 }
 static void setPart(int part, int v) {
+  cfg.ntp = 0; // ręczne ustawienie ma pierwszeństwo przed NTP
+  settingsSave();
   struct tm t = editTime();
   int y = t.tm_year + 1900, mo = t.tm_mon + 1, d = t.tm_mday, h = t.tm_hour, mi = t.tm_min;
   switch (part) { case 0: h = v; break; case 1: mi = v; break; case 2: d = v; break; case 3: mo = v; break; case 4: y = v; break; }
+  static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  int maxDay = days[mo - 1] + (mo == 2 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+  if (d > maxDay) d = maxDay;
   clockSetLocal(y, mo, d, h, mi);
 }
 static const Param P_CLOCK[] = {
