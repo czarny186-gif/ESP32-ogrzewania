@@ -34,7 +34,7 @@ void settingsDefaults(Settings &s) {
 
   s.offset = 0;
   s.filter = 2;
-  s.faultMode = FAULT_DUTY;
+  s.faultMode = FAULT_OFF;
   s.faultDuty = 20;
 
   s.winEnable = 1;

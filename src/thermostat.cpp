@@ -225,7 +225,14 @@ void thermoLoop() {
   antiBlockCheck(t, tv);
 
   if (th.testOutput && (int32_t)(now - th.testEndMs) >= 0) th.testOutput = false;
-  bool heat = th.demand || th.antiBlock || th.testOutput;
+  bool heat = th.demand || (!sensor.fault && th.antiBlock) || th.testOutput;
+  // Minimalne czasy załączenia/wyłączenia obowiązują również w TPI.
+  // Awaria czujnika z trybem FAULT_OFF wyłącza natychmiast.
+  if (sensor.fault && cfg.faultMode == FAULT_OFF && !th.testOutput) heat = false;
+  else {
+    if (heat && !th.heating && now - lastSwitchMs < (uint32_t)cfg.minOff * 60000UL) heat = false;
+    if (!heat && th.heating && now - lastSwitchMs < (uint32_t)cfg.minOn * 60000UL) heat = true;
+  }
 
   if (heat != th.heating) {
     th.heating = heat;

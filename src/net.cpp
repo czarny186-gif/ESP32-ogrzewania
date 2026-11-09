@@ -13,6 +13,39 @@ static bool serverStarted = false;
 static uint32_t connectStart = 0;
 static uint32_t lastRetry = 0;
 static const char *AP_PASS = "termostat";
+static String pendingSsid, pendingPass;
+static bool pending = false, failed = false;
+static int scanCount = -2;
+static String scanSsid[20];
+static int scanRssi[20];
+static bool scanLocked[20];
+
+void netScanBegin() {
+  if (pending) return;
+  WiFi.scanDelete();
+  WiFi.mode(WIFI_STA);
+  scanCount = -1;
+  if (WiFi.scanNetworks(true, true) == WIFI_SCAN_FAILED) scanCount = -2;
+}
+int netScanStatus() { return scanCount; }
+String netScanName(int i) { return i >= 0 && i < scanCount ? scanSsid[i] : String(); }
+int netScanSignal(int i) { return i >= 0 && i < scanCount ? scanRssi[i] : -100; }
+bool netScanSecure(int i) { return i >= 0 && i < scanCount ? scanLocked[i] : true; }
+bool netCredentialsPending() { return pending; }
+bool netCredentialsFailed() { return failed; }
+void netTryCredentials(const String &ssid, const String &password) {
+  if (ssid.isEmpty() || ssid.length() > 32 || password.length() > 64) return;
+  pendingSsid = ssid;
+  pendingPass = password;
+  pending = true;
+  failed = false;
+  WiFi.scanDelete();
+  scanCount = -2;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(pendingSsid.c_str(), pendingPass.c_str());
+  state = NET_CONNECTING;
+  connectStart = millis();
+}
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -85,6 +118,9 @@ String netApName() {
 const char *netApPass() { return AP_PASS; }
 
 void netReconnect() {
+  pending = false;
+  pendingSsid = "";
+  pendingPass = "";
   if (!cfg.wifiEnable || cfg.ssid[0] == 0) { netStop(); return; }
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
@@ -114,17 +150,45 @@ void netStop() {
 }
 
 void netLoop() {
+  if (scanCount == -1) {
+    int n = WiFi.scanComplete();
+    if (n >= 0) {
+      scanCount = min(n, 20);
+      for (int i = 0; i < scanCount; ++i) {
+        scanSsid[i] = WiFi.SSID(i);
+        scanRssi[i] = WiFi.RSSI(i);
+        scanLocked[i] = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+      }
+      WiFi.scanDelete();
+    } else if (n == WIFI_SCAN_FAILED) scanCount = -2;
+  }
   if (serverStarted) server.handleClient();
   switch (state) {
     case NET_CONNECTING:
       if (WiFi.status() == WL_CONNECTED) {
         state = NET_CONNECTED;
+        if (pending) {
+          strlcpy(cfg.ssid, pendingSsid.c_str(), sizeof(cfg.ssid));
+          strlcpy(cfg.pass, pendingPass.c_str(), sizeof(cfg.pass));
+          cfg.wifiEnable = 1;
+          settingsSaveNow();
+          pending = false;
+          pendingSsid = "";
+          pendingPass = "";
+          failed = false;
+        }
         if (cfg.ntp) clockStartNtp();
         startServer();
       } else if (millis() - connectStart > 20000) {
         WiFi.disconnect();
         state = NET_OFF;
         lastRetry = millis();
+        if (pending) {
+          pending = false;
+          pendingSsid = "";
+          pendingPass = "";
+          failed = true;
+        }
       }
       break;
     case NET_CONNECTED:
@@ -132,7 +196,7 @@ void netLoop() {
       break;
     case NET_OFF:
       // ponowna próba co 5 min
-      if (cfg.wifiEnable && cfg.ssid[0] && millis() - lastRetry > 300000UL) netReconnect();
+      if (!failed && cfg.wifiEnable && cfg.ssid[0] && millis() - lastRetry > 300000UL) netReconnect();
       break;
     default: break;
   }

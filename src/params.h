@@ -35,4 +35,5 @@ void paramFormat(const Param &p, int v, char *buf, size_t n);
 // usługi UI wołane przez akcje
 void uiToast(const char *msg);
 void uiOpenApScreen();
+void uiOpenWifiScan();
 void uiRequestCalibrate();
