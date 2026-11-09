@@ -172,7 +172,7 @@ static void button(const Rect &r, const char *label, uint32_t bg, uint32_t fg, F
 // ------------------------------------------------------------ stan UI -----
 enum Screen : uint8_t {
   SCR_HOME = 0, SCR_MODE, SCR_VACATION, SCR_PROGRAM, SCR_PERIOD, SCR_COPY,
-  SCR_CHART, SCR_MENU, SCR_LIST, SCR_EDIT, SCR_CONFIRM, SCR_AP
+  SCR_CHART, SCR_MENU, SCR_LIST, SCR_EDIT, SCR_CONFIRM, SCR_AP, SCR_WIFI_SCAN, SCR_WIFI_PASS, SCR_WIFI_WAIT
 };
 
 static Screen scr = SCR_HOME;
@@ -185,6 +185,10 @@ static uint32_t touchStartMs = 0, lastRepeatMs = 0;
 static int16_t tx = 0, ty = 0;
 static bool wakeTouch = false;      // dotyk wybudzający – ignoruj do puszczenia
 static bool calibrateReq = false;
+static String chosenSsid, enteredPass;
+static bool upperKeys = false, symbolKeys = false, showPass = false;
+static int wifiPage = 0;
+static uint32_t wifiRefresh = 0;
 
 static char toastMsg[48];
 static uint32_t toastUntil = 0;
@@ -214,6 +218,7 @@ void uiToast(const char *msg) {
   needFull = true;
 }
 void uiOpenApScreen() { netStartAP(); go(SCR_AP); }
+void uiOpenWifiScan() { wifiPage = 0; netScanBegin(); go(SCR_WIFI_SCAN); }
 void uiRequestCalibrate() { calibrateReq = true; }
 
 static void fmtTemp(char *b, size_t n, int16_t t10, bool deg = true) {
@@ -997,6 +1002,106 @@ static void touchAp(int x, int y) {
   if (R_BTN_R.hit(x, y)) { netReconnect(); go(SCR_LIST); }
 }
 
+
+static const Rect W_BACK = {16,270,110,40}, W_GO = {346,270,118,40};
+static Rect wRow(int i) { return Rect{16,(int16_t)(55+i*42),448,38}; }
+static void drawWifiScan() {
+  lcd.fillScreen(C_BG); header("Wybierz sieć Wi-Fi");
+  int n = netScanStatus();
+  if (n < 0) text(20,90,n == -1 ? "Wyszukiwanie..." : "Błąd skanowania",F_M,C_MUTED,C_BG);
+  else if (n == 0) text(20,90,"Nie znaleziono sieci",F_M,C_MUTED,C_BG);
+  for (int i=0;i<5 && wifiPage*5+i<n;i++) {
+    int idx=wifiPage*5+i; Rect r=wRow(i);
+    lcd.fillRoundRect(r.x,r.y,r.w,r.h,7,C_PANEL);
+    String s=netScanName(idx);
+    if(s.length()>25) s=s.substring(0,25)+"...";
+    textMid(26,r.y+19,s.c_str(),F_M,C_TEXT,C_PANEL);
+    char b[25]; snprintf(b,sizeof(b),"%d dBm %s",netScanSignal(idx),netScanSecure(idx)?"*":"");
+    textMid(452,r.y+19,b,F_S,C_MUTED,C_PANEL,AL_R);
+  }
+  button(W_BACK,"Wstecz",C_PANEL2,C_TEXT);
+  if(n>5) {
+    button(Rect{142,270,80,40},"<",C_PANEL2,C_TEXT);
+    button(Rect{236,270,80,40},">",C_PANEL2,C_TEXT);
+  }
+  button(W_GO,"Skanuj",C_PANEL2,C_TEXT);
+}
+static void touchWifiScan(int x,int y) {
+  if(W_BACK.hit(x,y)) { netReconnect();go(SCR_LIST);return; }
+  if(W_GO.hit(x,y)) { wifiPage=0;netScanBegin();go(SCR_WIFI_SCAN);return; }
+  int n=netScanStatus();if(n<=0)return;
+  if(Rect{142,270,80,40}.hit(x,y)) { if(wifiPage)wifiPage--;go(SCR_WIFI_SCAN);return; }
+  if(Rect{236,270,80,40}.hit(x,y)) { if((wifiPage+1)*5<n)wifiPage++;go(SCR_WIFI_SCAN);return; }
+  for(int i=0;i<5;i++) {
+    int idx=wifiPage*5+i;
+    if(idx>=n || !wRow(i).hit(x,y))continue;
+    chosenSsid=netScanName(idx);enteredPass="";
+    upperKeys=false;symbolKeys=false;showPass=false;
+    if(netScanSecure(idx))go(SCR_WIFI_PASS);
+    else { netTryCredentials(chosenSsid,"");go(SCR_WIFI_WAIT); }
+    return;
+  }
+}
+static const char *KEY_LO[3]={"qwertyuiop","asdfghjkl-","zxcvbnm._@"};
+static const char *KEY_UP[3]={"QWERTYUIOP","ASDFGHJKL-","ZXCVBNM._@"};
+static const char *KEY_SY[3]={"1234567890","!#$%&*()-+","[]{}:;/?=_"};
+static Rect wKey(int c,int r) { return Rect{(int16_t)(16+45*c),(int16_t)(96+42*r),42,39}; }
+static void drawWifiPass() {
+  lcd.fillScreen(C_BG);header("Hasło sieci Wi-Fi");
+  String s="Sieć: "+chosenSsid;if(s.length()>38)s=s.substring(0,38);
+  text(18,49,s.c_str(),F_S,C_MUTED,C_BG);
+  String masked=showPass?enteredPass:String();
+  if(!showPass)for(unsigned i=0;i<enteredPass.length();i++)masked+="*";
+  if(masked.length()>37)masked=masked.substring(masked.length()-37);
+  lcd.fillRoundRect(16,68,448,25,5,C_PANEL);
+  text(24,70,masked.c_str(),F_S,C_TEXT,C_PANEL);
+  const char *const *keys=symbolKeys?KEY_SY:(upperKeys?KEY_UP:KEY_LO);
+  for(int r=0;r<3;r++)for(int c=0;c<10;c++) {
+    char ch[2]={keys[r][c],0};
+    button(wKey(c,r),ch,C_PANEL2,C_TEXT,F_M);
+  }
+  button(Rect{16,226,78,38},upperKeys?"abc":"ABC",C_PANEL2,C_TEXT,F_S);
+  button(Rect{100,226,82,38},symbolKeys?"Litery":"123#+",C_PANEL2,C_TEXT,F_S);
+  button(Rect{188,226,126,38},"Spacja",C_PANEL2,C_TEXT,F_S);
+  button(Rect{320,226,78,38},"Usuń",C_PANEL2,C_TEXT,F_S);
+  button(Rect{404,226,60,38},showPass?"Ukryj":"Pokaż",C_PANEL2,C_TEXT,F_S);
+  button(W_BACK,"Wstecz",C_PANEL2,C_TEXT);
+  button(W_GO,"Połącz",C_COMFORT,C_BG);
+}
+static void touchWifiPass(int x,int y) {
+  if(W_BACK.hit(x,y)) { go(SCR_WIFI_SCAN);return; }
+  if(W_GO.hit(x,y)) {
+    if(enteredPass.length()<8||enteredPass.length()>63) { uiToast("Hasło: 8-63 znaków");return; }
+    netTryCredentials(chosenSsid,enteredPass);enteredPass="";go(SCR_WIFI_WAIT);return;
+  }
+  if(Rect{16,226,78,38}.hit(x,y)) { upperKeys=!upperKeys;go(SCR_WIFI_PASS);return; }
+  if(Rect{100,226,82,38}.hit(x,y)) { symbolKeys=!symbolKeys;go(SCR_WIFI_PASS);return; }
+  if(Rect{188,226,126,38}.hit(x,y)) { if(enteredPass.length()<63)enteredPass+=" ";go(SCR_WIFI_PASS);return; }
+  if(Rect{320,226,78,38}.hit(x,y)) { if(enteredPass.length())enteredPass.remove(enteredPass.length()-1);go(SCR_WIFI_PASS);return; }
+  if(Rect{404,226,60,38}.hit(x,y)) { showPass=!showPass;go(SCR_WIFI_PASS);return; }
+  const char *const *keys=symbolKeys?KEY_SY:(upperKeys?KEY_UP:KEY_LO);
+  for(int r=0;r<3;r++)for(int c=0;c<10;c++)if(wKey(c,r).hit(x,y)) {
+    if(enteredPass.length()<63)enteredPass+=(char)keys[r][c];
+    go(SCR_WIFI_PASS);return;
+  }
+}
+static void drawWifiWait() {
+  lcd.fillScreen(C_BG);header("Połączenie Wi-Fi");
+  text(24,80,chosenSsid.c_str(),F_M,C_TEXT,C_BG);
+  const char *s=netCredentialsPending()?"Łączenie...":
+    netState()==NET_CONNECTED?"Połączono. Sieć zapisana.":
+    netCredentialsFailed()?"Błędne hasło lub brak połączenia.":"Brak połączenia.";
+  text(24,130,s,F_M,C_MUTED,C_BG);
+  button(W_BACK,"Wstecz",C_PANEL2,C_TEXT);
+  button(W_GO,"Zakończ",C_PANEL2,C_TEXT);
+}
+static void touchWifiWait(int x,int y) {
+  if(!W_BACK.hit(x,y)&&!W_GO.hit(x,y))return;
+  if(netCredentialsPending())return;
+  if(netState()==NET_CONNECTED)go(SCR_LIST);
+  else { netReconnect();go(SCR_WIFI_SCAN); }
+}
+
 // ================================================================ toast ====
 static void drawToast() {
   int w = textW(toastMsg, F_M) + 40;
@@ -1020,6 +1125,9 @@ static void drawScreen() {
     case SCR_EDIT: drawEdit(); break;
     case SCR_CONFIRM: drawConfirm(); break;
     case SCR_AP: drawAp(); break;
+    case SCR_WIFI_SCAN: drawWifiScan(); break;
+    case SCR_WIFI_PASS: drawWifiPass(); break;
+    case SCR_WIFI_WAIT: drawWifiWait(); break;
   }
 }
 
@@ -1037,6 +1145,9 @@ static void handleTouch(int x, int y, bool repeat, uint32_t heldMs) {
     case SCR_EDIT: touchEdit(x, y, repeat, heldMs); break;
     case SCR_CONFIRM: if (!repeat) touchConfirm(x, y); break;
     case SCR_AP: if (!repeat) touchAp(x, y); break;
+    case SCR_WIFI_SCAN: if (!repeat) touchWifiScan(x,y); break;
+    case SCR_WIFI_PASS: if (!repeat) touchWifiPass(x,y); break;
+    case SCR_WIFI_WAIT: if (!repeat) touchWifiWait(x,y); break;
   }
 }
 
@@ -1119,11 +1230,12 @@ void uiLoop() {
     dimmed = true;
     lcd.setBrightness(cfg.dimBrightness * 255 / 100);
     if (cfg.childLock) locked = true;
-    if (scr != SCR_HOME && scr != SCR_AP) go(SCR_HOME);
+    if (scr != SCR_HOME && scr != SCR_AP && scr != SCR_WIFI_SCAN && scr != SCR_WIFI_PASS && scr != SCR_WIFI_WAIT) go(SCR_HOME);
   }
-  if (idle > UI_IDLE_HOME_MS && scr != SCR_HOME && scr != SCR_AP) go(SCR_HOME);
+  if (idle > UI_IDLE_HOME_MS && scr != SCR_HOME && scr != SCR_AP && scr != SCR_WIFI_SCAN && scr != SCR_WIFI_PASS && scr != SCR_WIFI_WAIT) go(SCR_HOME);
   if (!cfg.childLock) locked = false;
 
+  if((scr==SCR_WIFI_SCAN||scr==SCR_WIFI_WAIT)&&now-wifiRefresh>500){wifiRefresh=now;needFull=true;}
   // ---- rysowanie
   if (toastUntil && (int32_t)(now - toastUntil) >= 0) { toastUntil = 0; needFull = true; }
   if (needFull) {

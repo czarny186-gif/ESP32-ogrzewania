@@ -170,6 +170,7 @@ static const Param P_WIFI[] = {
   INFO("Stan", infoNet),
   INFO("Sieć", [](char *b, size_t n) { snprintf(b, n, "%s", cfg.ssid[0] ? cfg.ssid : "—"); }),
   INFO("Adres IP", [](char *b, size_t n) { snprintf(b, n, "%s", netIP().c_str()); }),
+  ACTION("Wyszukaj sieci Wi-Fi", [] { uiOpenWifiScan(); }, false, "Wybierz sieć i wpisz hasło na ekranie."),
   ACTION("Konfiguruj przez telefon", [] { uiOpenApScreen(); }, false, "Uruchamia punkt dostępowy z formularzem."),
   ACTION("Zapomnij sieć", [] { cfg.ssid[0] = 0; cfg.pass[0] = 0; settingsSaveNow(); netStop(); uiToast("Usunięto dane sieci"); },
          true, "Usuwa zapisaną nazwę i hasło sieci."),
