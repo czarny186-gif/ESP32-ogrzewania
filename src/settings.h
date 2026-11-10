@@ -78,6 +78,9 @@ struct Settings {
   uint8_t theme;           // THEME_DARK / THEME_LIGHT / THEME_AUTO
   uint8_t themeDayFrom;    // motyw jasny od godziny (tryb automatyczny)
   uint8_t themeNightFrom;  // motyw ciemny od godziny
+
+  // --- od wersji 1.2
+  uint8_t wifiTx;          // indeks mocy nadajnika (0 = 8,5 dBm ... 5 = 19,5 dBm)
 };
 
 enum ThemeMode : uint8_t { THEME_DARK = 0, THEME_LIGHT, THEME_AUTO };

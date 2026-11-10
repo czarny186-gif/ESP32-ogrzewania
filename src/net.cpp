@@ -18,6 +18,52 @@ static WifiNet scanRes[WIFI_SCAN_MAX];
 static int scanCount = -2;
 static bool scanning = false;
 static bool connectFailed = false;
+static volatile int lastReason = 0;
+static bool eventsRegistered = false;
+
+// Moc nadajnika. Wiele płytek ESP32-C3 Mini (m.in. LOLIN C3 Mini v1.0 i klony
+// "Super Mini") ma źle dopasowaną antenę: przy domyślnych 19,5 dBm nadajnik
+// się przesterowuje, sieci są widoczne, ale połączenie i hotspot nie działają.
+static const wifi_power_t TX_POWER[] = {WIFI_POWER_8_5dBm, WIFI_POWER_11dBm, WIFI_POWER_13dBm,
+                                        WIFI_POWER_15dBm, WIFI_POWER_17dBm, WIFI_POWER_19_5dBm};
+static const char *const TX_NAME[] = {"8,5 dBm", "11 dBm", "13 dBm", "15 dBm", "17 dBm", "19,5 dBm"};
+
+const char *netTxPowerName(uint8_t idx) { return TX_NAME[idx < 6 ? idx : 0]; }
+
+void netApplyTxPower() {
+  if (WiFi.getMode() == WIFI_OFF) return;
+  bool ok = WiFi.setTxPower(TX_POWER[cfg.wifiTx < 6 ? cfg.wifiTx : 0]);
+  Serial.printf("[WiFi] moc nadajnika %s %s\n", netTxPowerName(cfg.wifiTx), ok ? "OK" : "BŁĄD");
+}
+
+const char *netReasonText(int r) {
+  switch (r) {
+    case 0:   return "";
+    case 2:   return "uwierzytelnienie wygasło";
+    case 14: case 15: case 204: return "nieprawidłowe hasło";
+    case 200: return "utracono sygnał sieci";
+    case 201: return "nie znaleziono sieci";
+    case 202: return "router odrzucił hasło";
+    case 203: return "router odrzucił połączenie";
+    case 205: return "błąd połączenia";
+    case 210: case 211: return "niezgodne zabezpieczenia sieci";
+    case 212: return "za słaby sygnał";
+    default:  return "błąd połączenia";
+  }
+}
+int netLastReason() { return lastReason; }
+
+static void registerEvents() {
+  if (eventsRegistered) return;
+  eventsRegistered = true;
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+    lastReason = info.wifi_sta_disconnected.reason;
+    Serial.printf("[WiFi] rozłączono, kod %d (%s)\n", lastReason, netReasonText(lastReason));
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
+    Serial.printf("[WiFi] połączono, IP %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+}
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -91,10 +137,21 @@ const char *netApPass() { return AP_PASS; }
 
 void netReconnect() {
   if (!cfg.wifiEnable || cfg.ssid[0] == 0) { netStop(); return; }
-  WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname("termostat");
+  registerEvents();
+  WiFi.persistent(false);              // dane sieci trzymamy sami w NVS
+  if (WiFi.getMode() != WIFI_STA) {
+    WiFi.softAPdisconnect(true);
+    WiFi.setHostname("termostat");
+    WiFi.mode(WIFI_STA);
+  }
+  WiFi.disconnect(false, false);
+  delay(50);
+  netApplyTxPower();                   // przed i po begin – część wersji SDK resetuje moc
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);  // także starsze routery WPA/TKIP
+  lastReason = 0;
   WiFi.begin(cfg.ssid, cfg.pass);
+  netApplyTxPower();
+  Serial.printf("[WiFi] łączenie z \"%s\" (hasło: %u znaków)\n", cfg.ssid, (unsigned)strlen(cfg.pass));
   state = NET_CONNECTING;
   connectStart = millis();
 }
@@ -107,7 +164,11 @@ void netBegin() {
 void netStartAP() {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(netApName().c_str(), AP_PASS);
+  netApplyTxPower();
+  bool ok = WiFi.softAP(netApName().c_str(), AP_PASS, 6);   // stały kanał 6
+  netApplyTxPower();
+  Serial.printf("[WiFi] punkt dostępowy %s: %s, IP %s\n", netApName().c_str(), ok ? "OK" : "BŁĄD",
+                WiFi.softAPIP().toString().c_str());
   state = NET_AP;
   startServer();
 }
@@ -129,6 +190,7 @@ void netScanStart() {
   wifi_mode_t m = WiFi.getMode();
   if (m == WIFI_OFF) WiFi.mode(WIFI_STA);
   else if (m == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+  netApplyTxPower();
   WiFi.scanDelete();
   if (WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED) {
     scanCount = 0;
@@ -192,7 +254,8 @@ void netLoop() {
         connectFailed = false;
         if (cfg.ntp) clockStartNtp();
         startServer();
-      } else if (el > 20000 || ((st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) && el > 6000)) {
+      } else if (el > 25000 || ((st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) && el > 12000)) {
+        Serial.printf("[WiFi] nie udało się połączyć (status %d, kod %d)\n", (int)st, lastReason);
         WiFi.disconnect();
         state = NET_OFF;
         connectFailed = true;

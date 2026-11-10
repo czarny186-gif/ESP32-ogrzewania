@@ -1331,7 +1331,7 @@ static void drawWifiConnect() {
     iconSignal(240, 92, -40, C_COMFORT, C_LINE);
     text(240, 124, "Łączenie z siecią", F_M, C_MUTED, C_BG, AL_C);
     text(240, 152, nm, F_B, C_TEXT, C_BG, AL_C);
-    text(240, 196, "To może potrwać do 20 sekund", F_S, C_MUTED, C_BG, AL_C);
+    text(240, 196, "To może potrwać do 25 sekund", F_S, C_MUTED, C_BG, AL_C);
     button(R_BTN_R, "Zamknij", C_PANEL2, C_TEXT);
   } else if (s == NET_CONNECTED) {
     lcd.fillCircle(240, 96, 22, C_OK);
@@ -1347,7 +1347,11 @@ static void drawWifiConnect() {
     iconWarn(240, 97, C_ALARM, C_ALARM_BG);
     text(240, 130, "Nie udało się połączyć z siecią", F_M, C_MUTED, C_BG, AL_C);
     text(240, 158, nm, F_B, C_TEXT, C_BG, AL_C);
-    text(240, 200, "Sprawdź hasło i zasięg sieci", F_M, C_TEXT, C_BG, AL_C);
+    int rs = netLastReason();
+    if (rs) snprintf(b, sizeof(b), "Przyczyna: %s (kod %d)", netReasonText(rs), rs);
+    else strcpy(b, "Sprawdź hasło i zasięg sieci");
+    text(240, 194, b, F_M, C_TEXT, C_BG, AL_C);
+    text(240, 222, "Pomaga też: Wi-Fi → Moc nadajnika", F_S, C_MUTED, C_BG, AL_C);
     button(R_BTN_L, "Zamknij", C_PANEL2, C_TEXT);
     button(R_BTN_R, "Zmień hasło", C_COMFORT, C_ONACC);
   }

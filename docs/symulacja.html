@@ -298,7 +298,7 @@ function defaults() {
     boostMin: 60, vacDays: 7, vacUntil: 0,
     brightness: 80, dimBrightness: 10, dimAfter: 60, childLock: 0,
     ntp: 1, wifiEnable: 1, ssid: 'DomWiFi', pass: 'tajnehaslo', week,
-    theme: 0, themeDayFrom: 7, themeNightFrom: 21
+    theme: 0, themeDayFrom: 7, themeNightFrom: 21, wifiTx: 0
   };
 }
 let cfg = defaults();
@@ -584,11 +584,12 @@ const CATEGORIES = [
     INFO("Stan", () => { const s = netState(); return s === NET_AP ? "Punkt dostępowy" : !cfg.wifiEnable ? "Wyłączone" : s === NET_CONNECTED ? "Połączono (-58 dBm)" : s === NET_CONNECTING ? "Łączenie…" : "Brak połączenia"; }),
     INFO("Sieć", () => cfg.ssid || "—"),
     INFO("Adres IP", () => apMode ? "192.168.4.1" : netState() === NET_CONNECTED ? "192.168.1.47" : "-"),
+    ENUM("Moc nadajnika", ["8,5 dBm (zalecane)", "11 dBm", "13 dBm", "15 dBm", "17 dBm", "19,5 dBm"], GS('wifiTx'), "Płytki ESP32-C3 Mini łączą się pewnie tylko przy obniżonej mocy. Zalecane 8,5 dBm; zwiększ, jeśli router jest daleko."),
     ACTION("Konfiguruj przez telefon", () => { apMode = true; go(SCR_AP); }, false, "Uruchamia punkt dostępowy z formularzem."),
     ACTION("Zapomnij sieć", () => { cfg.ssid = ''; cfg.pass = ''; net.state = NET_OFF; uiToast("Usunięto dane sieci"); }, true, "Usuwa zapisaną nazwę i hasło sieci."),
   ]},
   { name: "Informacje", params: [
-    INFO("Wersja", () => "1.1.0"),
+    INFO("Wersja", () => "1.2.0"),
     INFO("Czas pracy", () => fmtDuration(Math.floor(simMs / 1000))),
     INFO("Grzanie łącznie", () => Math.floor(stats.heatSecondsTotal / 3600) + " h"),
     INFO("Załączeń wyjścia", () => String(stats.relayCycles)),
@@ -1232,7 +1233,7 @@ function drawWifiConnect() {
   if (s === NET_CONNECTING) {
     iconSignal(240, 92, -40, C.COMFORT, C.LINE);
     text(240, 124, "Łączenie z siecią", F_M, C.MUTED, C.BG, AL_C); text(240, 152, nm, F_B, C.TEXT, C.BG, AL_C);
-    text(240, 196, "To może potrwać do 20 sekund", F_S, C.MUTED, C.BG, AL_C);
+    text(240, 196, "To może potrwać do 25 sekund", F_S, C.MUTED, C.BG, AL_C);
     button(R_BTN_R, "Zamknij", C.PANEL2, C.TEXT);
   } else if (s === NET_CONNECTED) {
     lcd.fillCircle(240, 96, 22, C.OK); lcd.drawWideLine(229, 97, 237, 105, 2.5, C.ONACC); lcd.drawWideLine(237, 105, 252, 88, 2.5, C.ONACC);
@@ -1242,7 +1243,8 @@ function drawWifiConnect() {
   } else {
     lcd.fillCircle(240, 96, 22, C.ALARM_BG); iconWarn(240, 97, C.ALARM, C.ALARM_BG);
     text(240, 130, "Nie udało się połączyć z siecią", F_M, C.MUTED, C.BG, AL_C); text(240, 158, nm, F_B, C.TEXT, C.BG, AL_C);
-    text(240, 200, "Sprawdź hasło i zasięg sieci", F_M, C.TEXT, C.BG, AL_C);
+    text(240, 194, "Przyczyna: nieprawidłowe hasło (kod 15)", F_M, C.TEXT, C.BG, AL_C);
+    text(240, 222, "Pomaga też: Wi-Fi → Moc nadajnika", F_S, C.MUTED, C.BG, AL_C);
     button(R_BTN_L, "Zamknij", C.PANEL2, C.TEXT); button(R_BTN_R, "Zmień hasło", C.COMFORT, C.ONACC);
   }
 }

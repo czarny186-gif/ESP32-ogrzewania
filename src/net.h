@@ -28,3 +28,7 @@ int netScanState();                  // -2 brak wyników, -1 trwa, >= 0 liczba s
 const WifiNet *netScanResults();     // posortowane od najsilniejszej
 void netConnectTo(const char *ssid, const char *pass);  // zapis + łączenie
 bool netLastFailed();                // ostatnia próba połączenia nieudana
+int netLastReason();                 // kod przyczyny rozłączenia (ESP-IDF), 0 = brak
+const char *netReasonText(int reason);
+void netApplyTxPower();              // po zmianie ustawienia mocy
+const char *netTxPowerName(uint8_t idx);

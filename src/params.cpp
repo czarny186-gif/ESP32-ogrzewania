@@ -164,6 +164,7 @@ static void infoNet(char *b, size_t n) {
     default:             snprintf(b, n, cfg.wifiEnable ? "Brak połączenia" : "Wyłączone");
   }
 }
+static const char *const O_TXPOW[] = {"8,5 dBm (zalecane)", "11 dBm", "13 dBm", "15 dBm", "17 dBm", "19,5 dBm"};
 static const Param P_WIFI[] = {
   BOOL("Wi-Fi", [] { return (int)cfg.wifiEnable; }, [](int v) { cfg.wifiEnable = v; netReconnect(); },
        "Wi-Fi daje czas z NTP i panel WWW pod adresem IP termostatu."),
@@ -171,6 +172,8 @@ static const Param P_WIFI[] = {
   INFO("Stan", infoNet),
   INFO("Sieć", [](char *b, size_t n) { snprintf(b, n, "%s", cfg.ssid[0] ? cfg.ssid : "—"); }),
   INFO("Adres IP", [](char *b, size_t n) { snprintf(b, n, "%s", netIP().c_str()); }),
+  ENUM("Moc nadajnika", O_TXPOW, 6, [] { return (int)cfg.wifiTx; }, [](int v) { cfg.wifiTx = v; netApplyTxPower(); },
+       "Płytki ESP32-C3 Mini łączą się pewnie tylko przy obniżonej mocy. Zalecane 8,5 dBm; zwiększ, jeśli router jest daleko."),
   ACTION("Konfiguruj przez telefon", [] { uiOpenApScreen(); }, false, "Uruchamia punkt dostępowy z formularzem."),
   ACTION("Zapomnij sieć", [] { cfg.ssid[0] = 0; cfg.pass[0] = 0; settingsSaveNow(); netStop(); uiToast("Usunięto dane sieci"); },
          true, "Usuwa zapisaną nazwę i hasło sieci."),

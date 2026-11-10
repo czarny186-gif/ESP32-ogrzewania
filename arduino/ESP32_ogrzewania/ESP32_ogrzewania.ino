@@ -51,7 +51,7 @@
 // ============================================================================
 #include <Arduino.h>
 
-#define FW_VERSION "1.1.0"
+#define FW_VERSION "1.2.0"
 #define DEVICE_NAME "Termostat"
 
 // ---------------------------------------------------------------- PINY -----
@@ -248,6 +248,9 @@ struct Settings {
   uint8_t theme;           // THEME_DARK / THEME_LIGHT / THEME_AUTO
   uint8_t themeDayFrom;    // motyw jasny od godziny (tryb automatyczny)
   uint8_t themeNightFrom;  // motyw ciemny od godziny
+
+  // --- od wersji 1.2
+  uint8_t wifiTx;          // indeks mocy nadajnika (0 = 8,5 dBm ... 5 = 19,5 dBm)
 };
 
 enum ThemeMode : uint8_t { THEME_DARK = 0, THEME_LIGHT, THEME_AUTO };
@@ -400,6 +403,10 @@ int netScanState();                  // -2 brak wyników, -1 trwa, >= 0 liczba s
 const WifiNet *netScanResults();     // posortowane od najsilniejszej
 void netConnectTo(const char *ssid, const char *pass);  // zapis + łączenie
 bool netLastFailed();                // ostatnia próba połączenia nieudana
+int netLastReason();                 // kod przyczyny rozłączenia (ESP-IDF), 0 = brak
+const char *netReasonText(int reason);
+void netApplyTxPower();              // po zmianie ustawienia mocy
+const char *netTxPowerName(uint8_t idx);
 
 // ========================================================== params.h
 // Tabela parametrów menu "Ustawienia" – opis, zakres, odczyt/zapis.
@@ -479,7 +486,7 @@ Stats stats;
 
 static Preferences prefs;
 static const uint32_t CFG_MAGIC = 0x0E5A2026;
-static const uint16_t CFG_VERSION = 1;
+static const uint16_t CFG_VERSION = 2;
 static uint32_t saveRequestedAt = 0;
 
 void settingsDefaults(Settings &s) {
@@ -544,6 +551,7 @@ void settingsDefaults(Settings &s) {
   s.theme = THEME_DARK;
   s.themeDayFrom = 7;
   s.themeNightFrom = 21;
+  s.wifiTx = 0;      // 8,5 dBm – płytki ESP32-C3 Mini mają wadliwy tor antenowy przy pełnej mocy
 }
 
 void settingsLoad() {
@@ -557,12 +565,19 @@ void settingsLoad() {
     settingsDefaults(def);
     tmp = def;
     prefs.getBytes("cfg", &tmp, n);
-    if (tmp.magic == CFG_MAGIC && tmp.version == CFG_VERSION) {
-      if (n < sizeof(Settings)) {
-        tmp.theme = def.theme;
-        tmp.themeDayFrom = def.themeDayFrom;
-        tmp.themeNightFrom = def.themeNightFrom;
+    if (tmp.magic == CFG_MAGIC && (tmp.version == 1 || tmp.version == CFG_VERSION)) {
+      if (tmp.version == 1) {
+        // 1.0 nie miała motywu, 1.0 i 1.1 nie miały mocy nadajnika
+        if (n < offsetof(Settings, themeNightFrom) + 1) {
+          tmp.theme = def.theme;
+          tmp.themeDayFrom = def.themeDayFrom;
+          tmp.themeNightFrom = def.themeNightFrom;
+        }
+        tmp.wifiTx = def.wifiTx;
+        tmp.version = CFG_VERSION;
+        n = 0;   // wymuś zapis w nowym formacie
       }
+      if (tmp.wifiTx > 5) tmp.wifiTx = def.wifiTx;
       cfg = tmp;
       ok = true;
       if (n != sizeof(Settings)) settingsSaveNow();
@@ -1100,6 +1115,52 @@ static WifiNet scanRes[WIFI_SCAN_MAX];
 static int scanCount = -2;
 static bool scanning = false;
 static bool connectFailed = false;
+static volatile int lastReason = 0;
+static bool eventsRegistered = false;
+
+// Moc nadajnika. Wiele płytek ESP32-C3 Mini (m.in. LOLIN C3 Mini v1.0 i klony
+// "Super Mini") ma źle dopasowaną antenę: przy domyślnych 19,5 dBm nadajnik
+// się przesterowuje, sieci są widoczne, ale połączenie i hotspot nie działają.
+static const wifi_power_t TX_POWER[] = {WIFI_POWER_8_5dBm, WIFI_POWER_11dBm, WIFI_POWER_13dBm,
+                                        WIFI_POWER_15dBm, WIFI_POWER_17dBm, WIFI_POWER_19_5dBm};
+static const char *const TX_NAME[] = {"8,5 dBm", "11 dBm", "13 dBm", "15 dBm", "17 dBm", "19,5 dBm"};
+
+const char *netTxPowerName(uint8_t idx) { return TX_NAME[idx < 6 ? idx : 0]; }
+
+void netApplyTxPower() {
+  if (WiFi.getMode() == WIFI_OFF) return;
+  bool ok = WiFi.setTxPower(TX_POWER[cfg.wifiTx < 6 ? cfg.wifiTx : 0]);
+  Serial.printf("[WiFi] moc nadajnika %s %s\n", netTxPowerName(cfg.wifiTx), ok ? "OK" : "BŁĄD");
+}
+
+const char *netReasonText(int r) {
+  switch (r) {
+    case 0:   return "";
+    case 2:   return "uwierzytelnienie wygasło";
+    case 14: case 15: case 204: return "nieprawidłowe hasło";
+    case 200: return "utracono sygnał sieci";
+    case 201: return "nie znaleziono sieci";
+    case 202: return "router odrzucił hasło";
+    case 203: return "router odrzucił połączenie";
+    case 205: return "błąd połączenia";
+    case 210: case 211: return "niezgodne zabezpieczenia sieci";
+    case 212: return "za słaby sygnał";
+    default:  return "błąd połączenia";
+  }
+}
+int netLastReason() { return lastReason; }
+
+static void registerEvents() {
+  if (eventsRegistered) return;
+  eventsRegistered = true;
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+    lastReason = info.wifi_sta_disconnected.reason;
+    Serial.printf("[WiFi] rozłączono, kod %d (%s)\n", lastReason, netReasonText(lastReason));
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
+    Serial.printf("[WiFi] połączono, IP %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+}
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1173,10 +1234,21 @@ const char *netApPass() { return AP_PASS; }
 
 void netReconnect() {
   if (!cfg.wifiEnable || cfg.ssid[0] == 0) { netStop(); return; }
-  WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname("termostat");
+  registerEvents();
+  WiFi.persistent(false);              // dane sieci trzymamy sami w NVS
+  if (WiFi.getMode() != WIFI_STA) {
+    WiFi.softAPdisconnect(true);
+    WiFi.setHostname("termostat");
+    WiFi.mode(WIFI_STA);
+  }
+  WiFi.disconnect(false, false);
+  delay(50);
+  netApplyTxPower();                   // przed i po begin – część wersji SDK resetuje moc
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);  // także starsze routery WPA/TKIP
+  lastReason = 0;
   WiFi.begin(cfg.ssid, cfg.pass);
+  netApplyTxPower();
+  Serial.printf("[WiFi] łączenie z \"%s\" (hasło: %u znaków)\n", cfg.ssid, (unsigned)strlen(cfg.pass));
   state = NET_CONNECTING;
   connectStart = millis();
 }
@@ -1189,7 +1261,11 @@ void netBegin() {
 void netStartAP() {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(netApName().c_str(), AP_PASS);
+  netApplyTxPower();
+  bool ok = WiFi.softAP(netApName().c_str(), AP_PASS, 6);   // stały kanał 6
+  netApplyTxPower();
+  Serial.printf("[WiFi] punkt dostępowy %s: %s, IP %s\n", netApName().c_str(), ok ? "OK" : "BŁĄD",
+                WiFi.softAPIP().toString().c_str());
   state = NET_AP;
   startServer();
 }
@@ -1211,6 +1287,7 @@ void netScanStart() {
   wifi_mode_t m = WiFi.getMode();
   if (m == WIFI_OFF) WiFi.mode(WIFI_STA);
   else if (m == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+  netApplyTxPower();
   WiFi.scanDelete();
   if (WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED) {
     scanCount = 0;
@@ -1274,7 +1351,8 @@ void netLoop() {
         connectFailed = false;
         if (cfg.ntp) clockStartNtp();
         startServer();
-      } else if (el > 20000 || ((st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) && el > 6000)) {
+      } else if (el > 25000 || ((st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) && el > 12000)) {
+        Serial.printf("[WiFi] nie udało się połączyć (status %d, kod %d)\n", (int)st, lastReason);
         WiFi.disconnect();
         state = NET_OFF;
         connectFailed = true;
@@ -1459,6 +1537,7 @@ static void infoNet(char *b, size_t n) {
     default:             snprintf(b, n, cfg.wifiEnable ? "Brak połączenia" : "Wyłączone");
   }
 }
+static const char *const O_TXPOW[] = {"8,5 dBm (zalecane)", "11 dBm", "13 dBm", "15 dBm", "17 dBm", "19,5 dBm"};
 static const Param P_WIFI[] = {
   BOOL("Wi-Fi", [] { return (int)cfg.wifiEnable; }, [](int v) { cfg.wifiEnable = v; netReconnect(); },
        "Wi-Fi daje czas z NTP i panel WWW pod adresem IP termostatu."),
@@ -1466,6 +1545,8 @@ static const Param P_WIFI[] = {
   INFO("Stan", infoNet),
   INFO("Sieć", [](char *b, size_t n) { snprintf(b, n, "%s", cfg.ssid[0] ? cfg.ssid : "—"); }),
   INFO("Adres IP", [](char *b, size_t n) { snprintf(b, n, "%s", netIP().c_str()); }),
+  ENUM("Moc nadajnika", O_TXPOW, 6, [] { return (int)cfg.wifiTx; }, [](int v) { cfg.wifiTx = v; netApplyTxPower(); },
+       "Płytki ESP32-C3 Mini łączą się pewnie tylko przy obniżonej mocy. Zalecane 8,5 dBm; zwiększ, jeśli router jest daleko."),
   ACTION("Konfiguruj przez telefon", [] { uiOpenApScreen(); }, false, "Uruchamia punkt dostępowy z formularzem."),
   ACTION("Zapomnij sieć", [] { cfg.ssid[0] = 0; cfg.pass[0] = 0; settingsSaveNow(); netStop(); uiToast("Usunięto dane sieci"); },
          true, "Usuwa zapisaną nazwę i hasło sieci."),
@@ -2855,7 +2936,7 @@ static void drawWifiConnect() {
     iconSignal(240, 92, -40, C_COMFORT, C_LINE);
     text(240, 124, "Łączenie z siecią", F_M, C_MUTED, C_BG, AL_C);
     text(240, 152, nm, F_B, C_TEXT, C_BG, AL_C);
-    text(240, 196, "To może potrwać do 20 sekund", F_S, C_MUTED, C_BG, AL_C);
+    text(240, 196, "To może potrwać do 25 sekund", F_S, C_MUTED, C_BG, AL_C);
     button(R_BTN_R, "Zamknij", C_PANEL2, C_TEXT);
   } else if (s == NET_CONNECTED) {
     lcd.fillCircle(240, 96, 22, C_OK);
@@ -2871,7 +2952,11 @@ static void drawWifiConnect() {
     iconWarn(240, 97, C_ALARM, C_ALARM_BG);
     text(240, 130, "Nie udało się połączyć z siecią", F_M, C_MUTED, C_BG, AL_C);
     text(240, 158, nm, F_B, C_TEXT, C_BG, AL_C);
-    text(240, 200, "Sprawdź hasło i zasięg sieci", F_M, C_TEXT, C_BG, AL_C);
+    int rs = netLastReason();
+    if (rs) snprintf(b, sizeof(b), "Przyczyna: %s (kod %d)", netReasonText(rs), rs);
+    else strcpy(b, "Sprawdź hasło i zasięg sieci");
+    text(240, 194, b, F_M, C_TEXT, C_BG, AL_C);
+    text(240, 222, "Pomaga też: Wi-Fi → Moc nadajnika", F_S, C_MUTED, C_BG, AL_C);
     button(R_BTN_L, "Zamknij", C_PANEL2, C_TEXT);
     button(R_BTN_R, "Zmień hasło", C_COMFORT, C_ONACC);
   }
