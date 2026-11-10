@@ -1,5 +1,6 @@
 #include "settings.h"
 #include <Preferences.h>
+#include <stddef.h>
 
 Settings cfg;
 Stats stats;
@@ -67,15 +68,33 @@ void settingsDefaults(Settings &s) {
     }
   }
   s.touchValid = 0;
+
+  s.theme = THEME_DARK;
+  s.themeDayFrom = 7;
+  s.themeNightFrom = 21;
 }
 
 void settingsLoad() {
   prefs.begin("termostat", false);
   size_t n = prefs.getBytesLength("cfg");
   bool ok = false;
-  if (n == sizeof(Settings)) {
-    prefs.getBytes("cfg", &cfg, sizeof(Settings));
-    ok = (cfg.magic == CFG_MAGIC && cfg.version == CFG_VERSION);
+  // Akceptuj także krótszy zapis ze starszej wersji: brakujące (nowe) pola
+  // dostają wartości domyślne, a kalibracja dotyku i ustawienia zostają.
+  if (n >= offsetof(Settings, theme) && n <= sizeof(Settings)) {
+    Settings def, tmp;
+    settingsDefaults(def);
+    tmp = def;
+    prefs.getBytes("cfg", &tmp, n);
+    if (tmp.magic == CFG_MAGIC && tmp.version == CFG_VERSION) {
+      if (n < sizeof(Settings)) {
+        tmp.theme = def.theme;
+        tmp.themeDayFrom = def.themeDayFrom;
+        tmp.themeNightFrom = def.themeNightFrom;
+      }
+      cfg = tmp;
+      ok = true;
+      if (n != sizeof(Settings)) settingsSaveNow();
+    }
   }
   if (!ok) {
     settingsDefaults(cfg);

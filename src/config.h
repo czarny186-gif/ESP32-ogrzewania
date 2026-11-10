@@ -7,7 +7,7 @@
 #pragma once
 #include <Arduino.h>
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.1.0"
 #define DEVICE_NAME "Termostat"
 
 // ---------------------------------------------------------------- PINY -----

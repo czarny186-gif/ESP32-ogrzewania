@@ -73,7 +73,14 @@ struct Settings {
   // --- kalibracja dotyku
   uint8_t  touchValid;
   uint16_t touchCal[8];
+
+  // --- od wersji 1.1 (pola dopisywane NA KOŃCU – stare ustawienia wczytują się dalej)
+  uint8_t theme;           // THEME_DARK / THEME_LIGHT / THEME_AUTO
+  uint8_t themeDayFrom;    // motyw jasny od godziny (tryb automatyczny)
+  uint8_t themeNightFrom;  // motyw ciemny od godziny
 };
+
+enum ThemeMode : uint8_t { THEME_DARK = 0, THEME_LIGHT, THEME_AUTO };
 
 extern Settings cfg;
 

@@ -71,13 +71,20 @@ Dlaczego te piny:
 **Czujnik:** korekta odczytu, filtr wygładzający, ponowne wykrywanie po podłączeniu.
 
 **Ekran:**
-- jasność i automatyczne przyciemnianie
+- motyw ciemny, jasny albo automatyczny (jasny w dzień, ciemny wieczorem, godziny do ustawienia)
+- jasność i automatyczne przyciemnianie; dowolny dotyk budzi wygaszony ekran
 - blokada rodzicielska (odblokowanie przez przytrzymanie palca 3 s)
 - kalibracja dotyku zapisywana w pamięci
 
 **Historia:** wykres 24 h (temperatura, zadana, grzanie), czas grzania dziś, wczoraj i przez 7 dni, liczba załączeń.
 
-**Wi-Fi:** czas z NTP (strefa PL z DST), panel WWW pod adresem IP termostatu i konfiguracja sieci z telefonu (punkt dostępowy `Termostat-XXXX`, hasło `termostat`, adres 192.168.4.1).
+**Wi-Fi:**
+- wyszukiwanie sieci z poziomu wyświetlacza (Ustawienia → Wi-Fi → Wyszukaj sieci), z siłą sygnału i oznaczeniem sieci zabezpieczonych
+- wpisywanie hasła klawiaturą ekranową (litery, wielkie litery, cyfry i wszystkie znaki ASCII); przycisk z okiem pokazuje lub ukrywa hasło, a przy ukrytym haśle ostatni wpisany znak jest widoczny przez sekundę
+- ręczne wpisanie nazwy sieci ukrytej („Inna sieć”)
+- ekran łączenia z wynikiem: połączono z adresem IP albo błąd z możliwością poprawienia hasła
+- czas z NTP (strefa PL z DST), panel WWW pod adresem IP termostatu
+- awaryjnie konfiguracja z telefonu (punkt dostępowy `Termostat-XXXX`, hasło `termostat`, adres 192.168.4.1)
 
 Wszystkie ustawienia są zapisywane w pamięci NVS i zostają po zaniku zasilania.
 

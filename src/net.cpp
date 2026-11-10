@@ -14,6 +14,11 @@ static uint32_t connectStart = 0;
 static uint32_t lastRetry = 0;
 static const char *AP_PASS = "termostat";
 
+static WifiNet scanRes[WIFI_SCAN_MAX];
+static int scanCount = -2;
+static bool scanning = false;
+static bool connectFailed = false;
+
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang="pl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Termostat</title><style>
@@ -113,20 +118,88 @@ void netStop() {
   state = NET_OFF;
 }
 
+// ------------------------------------------------------ skanowanie sieci --
+void netScanStart() {
+  if (scanning) return;
+  if (state == NET_CONNECTING) {        // skan przerywa łączenie – zakończ je czysto
+    WiFi.disconnect();
+    state = NET_OFF;
+    lastRetry = millis();
+  }
+  wifi_mode_t m = WiFi.getMode();
+  if (m == WIFI_OFF) WiFi.mode(WIFI_STA);
+  else if (m == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+  WiFi.scanDelete();
+  if (WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED) {
+    scanCount = 0;
+    return;
+  }
+  scanning = true;
+  scanCount = -1;
+}
+
+static void scanPoll() {
+  if (!scanning) return;
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) return;
+  scanning = false;
+  int c = 0;
+  for (int i = 0; i < n; i++) {
+    String s = WiFi.SSID(i);
+    if (s.length() == 0) continue;      // sieci ukryte – przez "Inna sieć"
+    int8_t rssi = WiFi.RSSI(i);
+    int j;
+    for (j = 0; j < c; j++) if (strcmp(scanRes[j].ssid, s.c_str()) == 0) break;
+    if (j < c) {                        // ta sama sieć z kilku punktów – zostaw najsilniejszy
+      if (rssi > scanRes[j].rssi) scanRes[j].rssi = rssi;
+      continue;
+    }
+    if (c >= WIFI_SCAN_MAX) continue;
+    strlcpy(scanRes[c].ssid, s.c_str(), sizeof(scanRes[c].ssid));
+    scanRes[c].rssi = rssi;
+    scanRes[c].secure = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+    c++;
+  }
+  for (int i = 1; i < c; i++)
+    for (int j = i; j > 0 && scanRes[j].rssi > scanRes[j - 1].rssi; j--) std::swap(scanRes[j], scanRes[j - 1]);
+  scanCount = c;
+  WiFi.scanDelete();
+  if (state == NET_OFF && !cfg.wifiEnable) WiFi.mode(WIFI_OFF);
+}
+
+int netScanState() { return scanning ? -1 : scanCount; }
+const WifiNet *netScanResults() { return scanRes; }
+bool netLastFailed() { return connectFailed; }
+
+void netConnectTo(const char *ssid, const char *pass) {
+  strlcpy(cfg.ssid, ssid, sizeof(cfg.ssid));
+  strlcpy(cfg.pass, pass, sizeof(cfg.pass));
+  cfg.wifiEnable = 1;
+  settingsSaveNow();
+  connectFailed = false;
+  netReconnect();
+}
+
 void netLoop() {
   if (serverStarted) server.handleClient();
+  scanPoll();
   switch (state) {
-    case NET_CONNECTING:
-      if (WiFi.status() == WL_CONNECTED) {
+    case NET_CONNECTING: {
+      wl_status_t st = WiFi.status();
+      uint32_t el = millis() - connectStart;
+      if (st == WL_CONNECTED) {
         state = NET_CONNECTED;
+        connectFailed = false;
         if (cfg.ntp) clockStartNtp();
         startServer();
-      } else if (millis() - connectStart > 20000) {
+      } else if (el > 20000 || ((st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) && el > 6000)) {
         WiFi.disconnect();
         state = NET_OFF;
+        connectFailed = true;
         lastRetry = millis();
       }
       break;
+    }
     case NET_CONNECTED:
       if (WiFi.status() != WL_CONNECTED) { state = NET_OFF; lastRetry = millis(); }
       break;

@@ -119,7 +119,12 @@ static const Param P_WIN[] = {
 };
 
 // ---------------------------------------------------------------- Ekran --
+static const char *const O_THEME[] = {"Ciemny", "Jasny", "Automatyczny"};
 static const Param P_DISP[] = {
+  ENUM("Motyw", O_THEME, 3, GS(theme),
+       "Kolory menu. Automatyczny: jasny w dzień, ciemny wieczorem i w nocy (godziny poniżej)."),
+  NUM("Jasny od", 0, 23, 1, 0, ":00", GS(themeDayFrom), "Motyw automatyczny: od tej godziny menu jest jasne."),
+  NUM("Ciemny od", 0, 23, 1, 0, ":00", GS(themeNightFrom), "Motyw automatyczny: od tej godziny menu jest ciemne."),
   NUM("Jasność", 10, 100, 5, 0, "%", GS(brightness), "Jasność podświetlenia podczas obsługi."),
   NUM("Jasność wygaszona", 0, 50, 5, 0, "%", GS(dimBrightness), "Jasność po bezczynności. 0 = ekran wygaszony."),
   NUM("Wygaszanie po", 0, 600, 10, 0, "s", [] { return (int)cfg.dimAfter; }, [](int v) { cfg.dimAfter = v; },
@@ -162,6 +167,7 @@ static void infoNet(char *b, size_t n) {
 static const Param P_WIFI[] = {
   BOOL("Wi-Fi", [] { return (int)cfg.wifiEnable; }, [](int v) { cfg.wifiEnable = v; netReconnect(); },
        "Wi-Fi daje czas z NTP i panel WWW pod adresem IP termostatu."),
+  ACTION("Wyszukaj sieci", [] { uiOpenWifiScan(); }, false, "Lista sieci w zasięgu – wybierz sieć i wpisz hasło na ekranie."),
   INFO("Stan", infoNet),
   INFO("Sieć", [](char *b, size_t n) { snprintf(b, n, "%s", cfg.ssid[0] ? cfg.ssid : "—"); }),
   INFO("Adres IP", [](char *b, size_t n) { snprintf(b, n, "%s", netIP().c_str()); }),

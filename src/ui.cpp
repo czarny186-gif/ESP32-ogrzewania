@@ -19,21 +19,48 @@
 LGFX lcd;
 
 // ------------------------------------------------------------- kolory ----
-static constexpr uint32_t C_BG      = 0x0E1116;
-static constexpr uint32_t C_PANEL   = 0x1A1F27;
-static constexpr uint32_t C_PANEL2  = 0x262D38;
-static constexpr uint32_t C_LINE    = 0x353E4C;
-static constexpr uint32_t C_TEXT    = 0xE8ECF1;
-static constexpr uint32_t C_MUTED   = 0x8A94A3;
-static constexpr uint32_t C_HEAT    = 0xFF6B2C;
-static constexpr uint32_t C_COMFORT = 0xF5A524;
-static constexpr uint32_t C_ECO     = 0x4C9EEB;
-static constexpr uint32_t C_ECO_DK  = 0x1D3550;
-static constexpr uint32_t C_FROST   = 0x5ED6E6;
-static constexpr uint32_t C_VAC     = 0x2EC4B6;
-static constexpr uint32_t C_BOOST   = 0xFF4FA3;
-static constexpr uint32_t C_OK      = 0x3DD68C;
-static constexpr uint32_t C_ALARM   = 0xF2545B;
+// Dwie palety: ciemna i jasna. Kolory to zmienne, ustawiane przez themeApply().
+struct Theme {
+  uint32_t bg, panel, panel2, line, text, muted;
+  uint32_t heat, comfort, eco, ecoDk, frost, vac, boost, ok, alarm;
+  uint32_t onAcc;                         // tekst na kolorowych przyciskach
+  uint32_t heatBg, alarmBg, frostBg, heatDim;
+};
+static const Theme TH_DARK = {
+  0x0E1116, 0x1A1F27, 0x262D38, 0x353E4C, 0xE8ECF1, 0x8A94A3,
+  0xFF6B2C, 0xF5A524, 0x4C9EEB, 0x1D3550, 0x5ED6E6, 0x2EC4B6, 0xFF4FA3, 0x3DD68C, 0xF2545B,
+  0x0E1116,
+  0x3A2216, 0x3A1A1D, 0x173740, 0x7A3A1E};
+static const Theme TH_LIGHT = {
+  0xEEF1F4, 0xFFFFFF, 0xE1E6EC, 0xC5CDD7, 0x161B22, 0x5D6877,
+  0xE2551B, 0xD98614, 0x2F7FD0, 0xCFE0F3, 0x138FA0, 0x13998C, 0xD63384, 0x1F9E63, 0xD23B43,
+  0x111418,
+  0xFBE3D6, 0xF8DADC, 0xD5EFF3, 0xF2B79A};
+
+static uint32_t C_BG, C_PANEL, C_PANEL2, C_LINE, C_TEXT, C_MUTED;
+static uint32_t C_HEAT, C_COMFORT, C_ECO, C_ECO_DK, C_FROST, C_VAC, C_BOOST, C_OK, C_ALARM;
+static uint32_t C_ONACC, C_HEAT_BG, C_ALARM_BG, C_FROST_BG, C_HEAT_DIM;
+static uint8_t themeCur = 255;
+
+static void themeApply(uint8_t light) {
+  const Theme &t = light ? TH_LIGHT : TH_DARK;
+  C_BG = t.bg; C_PANEL = t.panel; C_PANEL2 = t.panel2; C_LINE = t.line; C_TEXT = t.text; C_MUTED = t.muted;
+  C_HEAT = t.heat; C_COMFORT = t.comfort; C_ECO = t.eco; C_ECO_DK = t.ecoDk; C_FROST = t.frost;
+  C_VAC = t.vac; C_BOOST = t.boost; C_OK = t.ok; C_ALARM = t.alarm;
+  C_ONACC = t.onAcc; C_HEAT_BG = t.heatBg; C_ALARM_BG = t.alarmBg; C_FROST_BG = t.frostBg; C_HEAT_DIM = t.heatDim;
+  themeCur = light;
+}
+
+// 0 = ciemny, 1 = jasny – z uwzględnieniem trybu automatycznego
+static uint8_t themeWanted() {
+  if (cfg.theme == THEME_DARK) return 0;
+  if (cfg.theme == THEME_LIGHT) return 1;
+  struct tm t;
+  if (!clockLocal(t)) return 0;
+  int h = t.tm_hour, a = cfg.themeDayFrom, b = cfg.themeNightFrom;
+  bool day = a <= b ? (h >= a && h < b) : (h >= a || h < b);
+  return day ? 1 : 0;
+}
 
 // -------------------------------------------------------------- czcionki --
 enum FontId : uint8_t { F_S = 0, F_M, F_B, F_XL, F_BIG };
@@ -161,6 +188,36 @@ static void iconCheck(int cx, int cy, uint32_t c) {
   lcd.drawWideLine(cx - 2, cy + 4, cx + 6, cy - 5, 1.5f, c);
 }
 
+static void iconEye(int cx, int cy, bool open, uint32_t c, uint32_t bg) {
+  lcd.fillEllipse(cx, cy, 13, 8, c);
+  lcd.fillEllipse(cx, cy, 11, 6, bg);
+  lcd.fillCircle(cx, cy, 4, c);
+  if (!open) {
+    lcd.drawWideLine(cx - 12, cy + 10, cx + 12, cy - 10, 3.0f, bg);
+    lcd.drawWideLine(cx - 12, cy + 10, cx + 12, cy - 10, 1.3f, c);
+  }
+}
+static void iconBackspace(int cx, int cy, uint32_t c, uint32_t bg) {
+  lcd.fillTriangle(cx - 15, cy, cx - 6, cy - 9, cx - 6, cy + 9, c);
+  lcd.fillRoundRect(cx - 7, cy - 9, 21, 19, 3, c);
+  lcd.drawWideLine(cx - 1, cy - 4, cx + 7, cy + 4, 1.3f, bg);
+  lcd.drawWideLine(cx - 1, cy + 4, cx + 7, cy - 4, 1.3f, bg);
+}
+static void iconShift(int cx, int cy, bool filled, bool caps, uint32_t c, uint32_t bg) {
+  lcd.fillTriangle(cx, cy - 12, cx - 11, cy, cx + 11, cy, c);
+  lcd.fillRect(cx - 5, cy, 11, 8, c);
+  if (!filled) {
+    lcd.fillTriangle(cx, cy - 8, cx - 6, cy - 2, cx + 6, cy - 2, bg);
+    lcd.fillRect(cx - 3, cy - 2, 7, 8, bg);
+  }
+  if (caps) lcd.fillRect(cx - 7, cy + 11, 15, 3, c);
+}
+static void iconSignal(int cx, int cy, int rssi, uint32_t on, uint32_t off) {
+  lcd.fillCircle(cx, cy + 6, 2, on);
+  lcd.fillArc(cx, cy + 6, 7, 9, 225, 315, rssi > -75 ? on : off);
+  lcd.fillArc(cx, cy + 6, 12, 14, 225, 315, rssi > -62 ? on : off);
+}
+
 // --------------------------------------------------------------- przyciski
 struct Rect { int16_t x, y, w, h; bool hit(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; } };
 
@@ -172,7 +229,8 @@ static void button(const Rect &r, const char *label, uint32_t bg, uint32_t fg, F
 // ------------------------------------------------------------ stan UI -----
 enum Screen : uint8_t {
   SCR_HOME = 0, SCR_MODE, SCR_VACATION, SCR_PROGRAM, SCR_PERIOD, SCR_COPY,
-  SCR_CHART, SCR_MENU, SCR_LIST, SCR_EDIT, SCR_CONFIRM, SCR_AP
+  SCR_CHART, SCR_MENU, SCR_LIST, SCR_EDIT, SCR_CONFIRM, SCR_AP,
+  SCR_WIFI_SCAN, SCR_KEYBOARD, SCR_WIFI_CONNECT
 };
 
 static Screen scr = SCR_HOME;
@@ -382,7 +440,7 @@ static void drawHome(bool full) {
   if (strcmp(buf, hc.chip)) {
     strcpy(hc.chip, buf);
     lcd.fillRect(R_CHIP.x, R_CHIP.y, R_CHIP.w, R_CHIP.h, C_BG);
-    uint32_t bg = kind == 1 ? 0x3A2216 : kind == 3 ? 0x3A1A1D : kind == 2 ? 0x173740 : C_PANEL;
+    uint32_t bg = kind == 1 ? C_HEAT_BG : kind == 3 ? C_ALARM_BG : kind == 2 ? C_FROST_BG : C_PANEL;
     uint32_t fg = kind == 1 ? C_HEAT : kind == 3 ? C_ALARM : kind == 2 ? C_FROST : kind == 0 ? C_MUTED : C_COMFORT;
     int w = textW(buf, F_M) + 52;
     if (w > R_CHIP.w) w = R_CHIP.w;
@@ -536,7 +594,7 @@ static void drawVacation() {
   for (const Rect *r : {&R_VD_M, &R_VT_M}) { button(*r, nullptr, C_PANEL2, 0); iconMinus(r->x + r->w / 2, r->y + r->h / 2, C_TEXT); }
   for (const Rect *r : {&R_VD_P, &R_VT_P}) { button(*r, nullptr, C_PANEL2, 0); iconPlus(r->x + r->w / 2, r->y + r->h / 2, C_TEXT); }
   button(R_BTN_L, "Anuluj", C_PANEL2, C_TEXT);
-  button(R_BTN_R, "Rozpocznij", C_VAC, C_BG);
+  button(R_BTN_R, "Rozpocznij", C_VAC, C_ONACC);
   drawVacationValues();
 }
 
@@ -589,8 +647,8 @@ static void drawProgram() {
     bool sel = i == progDay;
     uint32_t bg = sel ? C_COMFORT : C_PANEL;
     lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, bg);
-    textMid(r.x + r.w / 2, r.y + r.h / 2, DAY_SHORT[i], F_M, sel ? C_BG : C_TEXT, bg, AL_C);
-    if (i == today) lcd.fillRect(r.x + 20, r.y + r.h - 5, 18, 3, sel ? C_BG : C_COMFORT);
+    textMid(r.x + r.w / 2, r.y + r.h / 2, DAY_SHORT[i], F_M, sel ? C_ONACC : C_TEXT, bg, AL_C);
+    if (i == today) lcd.fillRect(r.x + 20, r.y + r.h - 5, 18, 3, sel ? C_ONACC : C_COMFORT);
   }
   const DaySchedule &d = cfg.week[progDay];
   drawTimeline(16, 102, 448, 26, d, -1, 0, 0);
@@ -666,9 +724,9 @@ static void drawPeriod() {
   for (const Rect *r : {&R_PS_M, &R_PE_M}) { button(*r, nullptr, C_PANEL2, 0); iconMinus(r->x + r->w / 2, r->y + r->h / 2, C_TEXT); }
   for (const Rect *r : {&R_PS_P, &R_PE_P}) { button(*r, nullptr, C_PANEL2, 0); iconPlus(r->x + r->w / 2, r->y + r->h / 2, C_TEXT); }
   text(16, 232, "Krok 15 min · przytrzymaj, aby przewijać", F_S, C_MUTED, C_BG);
-  if (periodIdx >= 0) button(R_P_DEL, "Usuń", 0x3A1A1D, C_ALARM);
+  if (periodIdx >= 0) button(R_P_DEL, "Usuń", C_ALARM_BG, C_ALARM);
   button(R_P_CAN, "Anuluj", C_PANEL2, C_TEXT);
-  button(R_P_OK, "Zapisz", C_COMFORT, C_BG);
+  button(R_P_OK, "Zapisz", C_COMFORT, C_ONACC);
   drawPeriodValues();
 }
 
@@ -774,7 +832,7 @@ static void drawChart() {
       int idx = (th.histHead - n + i + HISTORY_LEN) % HISTORY_LEN;
       int x = px(i);
       int h = th.histHeat[idx];
-      if (h > 0) lcd.fillRect(x - 1, 222, 3, 10, h >= 50 ? C_HEAT : 0x7A3A1E);
+      if (h > 0) lcd.fillRect(x - 1, 222, 3, 10, h >= 50 ? C_HEAT : C_HEAT_DIM);
       int sy = py(th.histTarget[idx]);
       if (i > 0) { lcd.drawFastHLine(px(i - 1), prevS, x - px(i - 1), C_COMFORT); lcd.drawLine(x, prevS, x, sy, C_COMFORT); }
       prevS = sy;
@@ -930,7 +988,7 @@ static void drawEdit() {
   text(240, 166, r, F_S, C_MUTED, C_BG, AL_C);
   if (p.help) wrapText(24, 192, 432, p.help, F_S, C_TEXT, 20, 3);
   button(R_BTN_L, "Anuluj", C_PANEL2, C_TEXT);
-  button(R_BTN_R, "Zapisz", C_COMFORT, C_BG);
+  button(R_BTN_R, "Zapisz", C_COMFORT, C_ONACC);
   drawEditValue();
 }
 
@@ -967,7 +1025,7 @@ static void drawConfirm() {
     if (confirmParam->help && confirmParam->help[0]) wrapText(40, 150, 400, confirmParam->help, F_S, C_MUTED, 20, 3);
   }
   button(R_BTN_L, "Anuluj", C_PANEL2, C_TEXT);
-  button(R_BTN_R, "Wykonaj", C_ALARM, C_BG);
+  button(R_BTN_R, "Wykonaj", C_ALARM, C_ONACC);
 }
 
 static void touchConfirm(int x, int y) {
@@ -997,6 +1055,314 @@ static void touchAp(int x, int y) {
   if (R_BTN_R.hit(x, y)) { netReconnect(); go(SCR_LIST); }
 }
 
+// ======================================================= Wi-Fi: lista sieci
+static const Rect R_RESCAN = {340, 6, 128, 36};
+static uint8_t scanPage = 0;
+
+// skraca tekst z "…", aby zmieścił się w maxw pikseli (bezpieczne dla UTF-8)
+static void fitText(char *out, size_t n, const char *s, FontId f, int maxw) {
+  strlcpy(out, s, n);
+  if (textW(out, f) <= maxw) return;
+  size_t len = strlen(out);
+  char tmp[80];
+  while (len > 0) {
+    do { len--; } while (len > 0 && (out[len] & 0xC0) == 0x80);
+    out[len] = 0;
+    snprintf(tmp, sizeof(tmp), "%s…", out);
+    if (textW(tmp, f) <= maxw) { strlcpy(out, tmp, n); return; }
+  }
+}
+
+void uiOpenWifiScan() {
+  netScanStart();
+  scanPage = 0;
+  go(SCR_WIFI_SCAN);
+}
+
+static void drawWifiScan() {
+  lcd.fillScreen(C_BG);
+  header("Sieci Wi-Fi");
+  int st = netScanState();
+  bool busy = st == -1;
+  button(R_RESCAN, busy ? "Szukam…" : "Odśwież", C_PANEL2, busy ? C_MUTED : C_TEXT, F_S);
+  if (busy) {
+    iconSignal(240, 120, -40, C_COMFORT, C_LINE);
+    text(240, 156, "Wyszukiwanie sieci…", F_M, C_MUTED, C_BG, AL_C);
+    return;
+  }
+  int n = st < 0 ? 0 : st;
+  int total = n + 1;                       // + "Inna sieć"
+  int pages = (total + ROWS - 1) / ROWS;
+  if (scanPage >= pages) scanPage = 0;
+  const WifiNet *res = netScanResults();
+  for (int i = 0; i < ROWS; i++) {
+    int k = scanPage * ROWS + i;
+    if (k >= total) break;
+    Rect r = listRow(i);
+    int cy = r.y + r.h / 2;
+    if (k < n) {
+      const WifiNet &w = res[k];
+      bool cur = netState() == NET_CONNECTED && strcmp(cfg.ssid, w.ssid) == 0;
+      lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, C_PANEL);
+      iconSignal(r.x + 24, cy - 3, w.rssi, C_TEXT, C_LINE);
+      char nm[64];
+      fitText(nm, sizeof(nm), w.ssid, F_M, cur ? 250 : 330);
+      textMid(r.x + 50, cy, nm, F_M, C_TEXT, C_PANEL);
+      if (cur) textMid(r.x + r.w - 62, cy, "połączono", F_S, C_OK, C_PANEL, AL_R);
+      if (w.secure) iconLock(r.x + r.w - 44, cy - 3, C_MUTED, C_PANEL);
+      iconChevron(r.x + r.w - 18, cy, 'r', C_MUTED);
+    } else {
+      lcd.drawRoundRect(r.x, r.y, r.w, r.h, 8, C_LINE);
+      iconPlus(r.x + 24, cy, C_MUTED);
+      textMid(r.x + 50, cy, "Inna sieć (wpisz nazwę)", F_M, C_MUTED, C_BG);
+    }
+  }
+  if (n == 0) text(240, 120, st == -2 ? "Dotknij „Odśwież”, aby wyszukać sieci" : "Nie znaleziono sieci w zasięgu",
+                   F_M, C_MUTED, C_BG, AL_C);
+  if (pages > 1) {
+    button(R_UP, nullptr, C_PANEL2, 0); iconChevron(R_UP.x + R_UP.w / 2, R_UP.y + R_UP.h / 2, 'u', scanPage > 0 ? C_TEXT : C_LINE);
+    button(R_DN, nullptr, C_PANEL2, 0); iconChevron(R_DN.x + R_DN.w / 2, R_DN.y + R_DN.h / 2, 'd', scanPage < pages - 1 ? C_TEXT : C_LINE);
+    char b[16]; snprintf(b, sizeof(b), "%d / %d", scanPage + 1, pages);
+    textMid(240, 294, b, F_M, C_MUTED, C_BG, AL_C);
+  }
+}
+
+// ==================================================== klawiatura ekranowa
+enum KbMode : uint8_t { KB_PASS = 0, KB_SSID };
+static uint8_t kbMode = KB_PASS;
+static char kbSsid[33];
+static char kbBuf[65];
+static uint8_t kbLayer = 0;                 // 0 litery, 1 i 2 cyfry/symbole
+static bool kbShift = false, kbCaps = false, kbShow = false, kbCursor = true;
+static uint32_t kbLastShift = 0, kbRevealUntil = 0, kbBlinkMs = 0;
+
+// Wszystkie drukowalne znaki ASCII są dostępne (hasła WPA)
+static const char *const KB_ROWS[3][3] = {
+  {"qwertyuiop", "asdfghjkl", "zxcvbnm"},
+  {"1234567890", "@#$%&*-+()", "\"':;!?,"},
+  {"1234567890", "~`|\\^=_{}[", "]<>/."},
+};
+static const Rect KB_FIELD = {12, 58, 396, 50}, KB_EYE = {416, 58, 56, 50};
+static const Rect KB_LEFT = {2, 220, 66, 44}, KB_BKSP = {408, 220, 70, 44};
+static const Rect KB_MODE = {2, 270, 92, 44}, KB_SPACE = {98, 270, 236, 44}, KB_OK = {338, 270, 140, 44};
+
+static Rect kbKey(int row, int idx, int n) {
+  int x = row < 2 ? (SCREEN_W - (n * 48 - 4)) / 2 + idx * 48 : 72 + (7 - n) * 24 + idx * 48;
+  return Rect{(int16_t)x, (int16_t)(120 + row * 50), 44, 44};
+}
+static char kbChar(int row, int idx) {
+  char c = KB_ROWS[kbLayer][row][idx];
+  if (kbLayer == 0 && (kbShift || kbCaps)) c = toupper(c);
+  return c;
+}
+
+static void kbOpen(uint8_t mode, const char *init) {
+  kbMode = mode;
+  strlcpy(kbBuf, init, sizeof(kbBuf));
+  kbLayer = 0;
+  kbShift = kbCaps = kbShow = false;
+  kbRevealUntil = 0;
+  go(SCR_KEYBOARD);
+}
+
+static void drawKbField() {
+  const Rect &f = KB_FIELD;
+  lcd.fillRoundRect(f.x, f.y, f.w, f.h, 10, C_PANEL);
+  lcd.drawRoundRect(f.x, f.y, f.w, f.h, 10, C_LINE);
+  int x0 = f.x + 14, maxw = f.w - 30, cy = f.y + f.h / 2;
+  int len = strlen(kbBuf);
+  int cx = x0;
+  bool masked = kbMode == KB_PASS && !kbShow;
+  if (len == 0) {
+    textMid(x0 + 6, cy, kbMode == KB_PASS ? "Hasło sieci" : "Nazwa sieci (SSID)", F_M, C_MUTED, C_PANEL);
+  } else if (masked) {
+    bool reveal = (int32_t)(kbRevealUntil - millis()) > 0;
+    int maxDots = (maxw - 20) / 14;
+    int start = len > maxDots ? len - maxDots : 0;
+    for (int i = start; i < len; i++) {
+      if (i == len - 1 && reveal) {
+        char s[2] = {kbBuf[i], 0};
+        cx += textMid(cx, cy, s, F_M, C_TEXT, C_PANEL) + 3;
+      } else {
+        lcd.fillCircle(cx + 5, cy, 5, C_TEXT);
+        cx += 14;
+      }
+    }
+  } else {
+    const char *p = kbBuf;
+    while (*p && textW(p, F_M) > maxw - 6) { p++; while ((*p & 0xC0) == 0x80) p++; }
+    cx += textMid(x0, cy, p, F_M, C_TEXT, C_PANEL) + 2;
+  }
+  if (kbCursor) lcd.fillRect(len ? cx : x0 + 2, cy - 13, 2, 26, C_COMFORT);
+  if (kbMode == KB_PASS) {
+    lcd.fillRoundRect(KB_EYE.x, KB_EYE.y, KB_EYE.w, KB_EYE.h, 10, kbShow ? C_COMFORT : C_PANEL2);
+    iconEye(KB_EYE.x + KB_EYE.w / 2, KB_EYE.y + KB_EYE.h / 2, kbShow, kbShow ? C_ONACC : C_TEXT,
+            kbShow ? C_COMFORT : C_PANEL2);
+  }
+}
+
+static void drawKeyboard() {
+  lcd.fillScreen(C_BG);
+  char t[64];
+  if (kbMode == KB_PASS) {
+    char nm[48];
+    fitText(nm, sizeof(nm), kbSsid, F_B, 330);
+    snprintf(t, sizeof(t), "Hasło: %s", nm);
+  } else {
+    strcpy(t, "Nazwa sieci");
+  }
+  header(t);
+  drawKbField();
+  for (int row = 0; row < 3; row++) {
+    const char *s = KB_ROWS[kbLayer][row];
+    int n = strlen(s);
+    for (int i = 0; i < n; i++) {
+      Rect r = kbKey(row, i, n);
+      lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, C_PANEL2);
+      char c[2] = {kbChar(row, i), 0};
+      textMid(r.x + r.w / 2, r.y + r.h / 2, c, F_B, C_TEXT, C_PANEL2, AL_C);
+    }
+  }
+  const Rect &L = KB_LEFT;
+  if (kbLayer == 0) {
+    bool on = kbShift || kbCaps;
+    uint32_t bg = on ? C_COMFORT : C_PANEL2;
+    lcd.fillRoundRect(L.x, L.y, L.w, L.h, 8, bg);
+    iconShift(L.x + L.w / 2, L.y + L.h / 2 - 1, on, kbCaps, on ? C_ONACC : C_TEXT, bg);
+  } else {
+    button(L, kbLayer == 1 ? "1/2" : "2/2", C_PANEL2, C_TEXT);
+  }
+  lcd.fillRoundRect(KB_BKSP.x, KB_BKSP.y, KB_BKSP.w, KB_BKSP.h, 8, C_PANEL2);
+  iconBackspace(KB_BKSP.x + KB_BKSP.w / 2, KB_BKSP.y + KB_BKSP.h / 2, C_TEXT, C_PANEL2);
+  button(KB_MODE, kbLayer == 0 ? "?123" : "ABC", C_PANEL2, C_TEXT);
+  button(KB_SPACE, "spacja", C_PANEL2, C_MUTED, F_S);
+  button(KB_OK, kbMode == KB_PASS ? "Połącz" : "Dalej", C_COMFORT, C_ONACC);
+}
+
+static void kbType(char c) {
+  size_t l = strlen(kbBuf);
+  size_t mx = kbMode == KB_PASS ? 63 : 32;
+  if (l >= mx) return;
+  kbBuf[l] = c;
+  kbBuf[l + 1] = 0;
+  kbRevealUntil = millis() + 1000;    // ukryte hasło: ostatni znak widoczny przez 1 s
+  kbCursor = true;
+  if (kbShift && !kbCaps) { kbShift = false; go(SCR_KEYBOARD); }
+  else drawKbField();
+}
+
+static void touchKeyboard(int x, int y, bool repeat) {
+  if (KB_BKSP.hit(x, y)) {
+    size_t l = strlen(kbBuf);
+    if (l) {
+      do { l--; } while (l > 0 && (kbBuf[l] & 0xC0) == 0x80);
+      kbBuf[l] = 0;
+    }
+    kbRevealUntil = 0;
+    drawKbField();
+    return;
+  }
+  if (repeat) return;
+  if (R_BACK.hit(x, y)) { go(SCR_WIFI_SCAN); return; }
+  if (kbMode == KB_PASS && KB_EYE.hit(x, y)) { kbShow = !kbShow; drawKbField(); return; }
+  for (int row = 0; row < 3; row++) {
+    int n = strlen(KB_ROWS[kbLayer][row]);
+    for (int i = 0; i < n; i++)
+      if (kbKey(row, i, n).hit(x, y)) { kbType(kbChar(row, i)); return; }
+  }
+  if (KB_LEFT.hit(x, y)) {
+    if (kbLayer == 0) {
+      uint32_t now = millis();
+      if (kbCaps) kbCaps = kbShift = false;                 // wyłącz CAPS
+      else if (kbShift && now - kbLastShift < 500) kbCaps = true;  // dwuklik = CAPS LOCK
+      else kbShift = !kbShift;
+      kbLastShift = now;
+    } else {
+      kbLayer = kbLayer == 1 ? 2 : 1;
+    }
+    go(SCR_KEYBOARD);
+    return;
+  }
+  if (KB_MODE.hit(x, y)) { kbLayer = kbLayer == 0 ? 1 : 0; go(SCR_KEYBOARD); return; }
+  if (KB_SPACE.hit(x, y)) { kbType(' '); return; }
+  if (KB_OK.hit(x, y)) {
+    if (kbMode == KB_SSID) {
+      if (!kbBuf[0]) { uiToast("Wpisz nazwę sieci"); return; }
+      strlcpy(kbSsid, kbBuf, sizeof(kbSsid));
+      kbOpen(KB_PASS, "");
+      return;
+    }
+    size_t l = strlen(kbBuf);
+    if (l > 0 && l < 8) { uiToast("Hasło musi mieć min. 8 znaków"); return; }
+    netConnectTo(kbSsid, kbBuf);
+    go(SCR_WIFI_CONNECT);
+  }
+}
+
+static void touchWifiScan(int x, int y) {
+  if (R_BACK.hit(x, y)) { go(SCR_LIST); return; }
+  int st = netScanState();
+  if (R_RESCAN.hit(x, y)) { if (st != -1) uiOpenWifiScan(); return; }
+  if (st == -1) return;
+  int n = st < 0 ? 0 : st, total = n + 1, pages = (total + ROWS - 1) / ROWS;
+  if (pages > 1 && R_UP.hit(x, y)) { if (scanPage > 0) { scanPage--; go(SCR_WIFI_SCAN); } return; }
+  if (pages > 1 && R_DN.hit(x, y)) { if (scanPage < pages - 1) { scanPage++; go(SCR_WIFI_SCAN); } return; }
+  for (int i = 0; i < ROWS; i++) {
+    int k = scanPage * ROWS + i;
+    if (k >= total || !listRow(i).hit(x, y)) continue;
+    if (k == n) { kbSsid[0] = 0; kbOpen(KB_SSID, ""); return; }
+    const WifiNet &w = netScanResults()[k];
+    strlcpy(kbSsid, w.ssid, sizeof(kbSsid));
+    if (!w.secure) { netConnectTo(kbSsid, ""); go(SCR_WIFI_CONNECT); return; }
+    // zapamiętana sieć: hasło podstawione, wystarczy "Połącz"
+    kbOpen(KB_PASS, strcmp(cfg.ssid, kbSsid) == 0 ? cfg.pass : "");
+    return;
+  }
+}
+
+// ===================================================== Wi-Fi: łączenie
+static void drawWifiConnect() {
+  lcd.fillScreen(C_BG);
+  header("Wi-Fi", false);
+  NetState s = netState();
+  char nm[64], b[48];
+  fitText(nm, sizeof(nm), cfg.ssid, F_B, 440);
+  if (s == NET_CONNECTING) {
+    iconSignal(240, 92, -40, C_COMFORT, C_LINE);
+    text(240, 124, "Łączenie z siecią", F_M, C_MUTED, C_BG, AL_C);
+    text(240, 152, nm, F_B, C_TEXT, C_BG, AL_C);
+    text(240, 196, "To może potrwać do 20 sekund", F_S, C_MUTED, C_BG, AL_C);
+    button(R_BTN_R, "Zamknij", C_PANEL2, C_TEXT);
+  } else if (s == NET_CONNECTED) {
+    lcd.fillCircle(240, 96, 22, C_OK);
+    lcd.drawWideLine(229, 97, 237, 105, 2.5f, C_ONACC);
+    lcd.drawWideLine(237, 105, 252, 88, 2.5f, C_ONACC);
+    text(240, 130, "Połączono z siecią", F_M, C_MUTED, C_BG, AL_C);
+    text(240, 158, nm, F_B, C_TEXT, C_BG, AL_C);
+    snprintf(b, sizeof(b), "Adres IP: %s", netIP().c_str());
+    text(240, 200, b, F_M, C_TEXT, C_BG, AL_C);
+    button(R_BTN_R, "Gotowe", C_COMFORT, C_ONACC);
+  } else {
+    lcd.fillCircle(240, 96, 22, C_ALARM_BG);
+    iconWarn(240, 97, C_ALARM, C_ALARM_BG);
+    text(240, 130, "Nie udało się połączyć z siecią", F_M, C_MUTED, C_BG, AL_C);
+    text(240, 158, nm, F_B, C_TEXT, C_BG, AL_C);
+    text(240, 200, "Sprawdź hasło i zasięg sieci", F_M, C_TEXT, C_BG, AL_C);
+    button(R_BTN_L, "Zamknij", C_PANEL2, C_TEXT);
+    button(R_BTN_R, "Zmień hasło", C_COMFORT, C_ONACC);
+  }
+}
+
+static void touchWifiConnect(int x, int y) {
+  NetState s = netState();
+  if (s == NET_CONNECTING || s == NET_CONNECTED) {
+    if (R_BTN_R.hit(x, y)) go(SCR_LIST);
+    return;
+  }
+  if (R_BTN_L.hit(x, y)) { go(SCR_LIST); return; }
+  if (R_BTN_R.hit(x, y)) { strlcpy(kbSsid, cfg.ssid, sizeof(kbSsid)); kbOpen(KB_PASS, cfg.pass); }
+}
+
 // ================================================================ toast ====
 static void drawToast() {
   int w = textW(toastMsg, F_M) + 40;
@@ -1020,6 +1386,9 @@ static void drawScreen() {
     case SCR_EDIT: drawEdit(); break;
     case SCR_CONFIRM: drawConfirm(); break;
     case SCR_AP: drawAp(); break;
+    case SCR_WIFI_SCAN: drawWifiScan(); break;
+    case SCR_KEYBOARD: drawKeyboard(); break;
+    case SCR_WIFI_CONNECT: drawWifiConnect(); break;
   }
 }
 
@@ -1037,6 +1406,9 @@ static void handleTouch(int x, int y, bool repeat, uint32_t heldMs) {
     case SCR_EDIT: touchEdit(x, y, repeat, heldMs); break;
     case SCR_CONFIRM: if (!repeat) touchConfirm(x, y); break;
     case SCR_AP: if (!repeat) touchAp(x, y); break;
+    case SCR_WIFI_SCAN: if (!repeat) touchWifiScan(x, y); break;
+    case SCR_KEYBOARD: touchKeyboard(x, y, repeat); break;
+    case SCR_WIFI_CONNECT: if (!repeat) touchWifiConnect(x, y); break;
   }
 }
 
@@ -1046,6 +1418,7 @@ static bool isStepper(int x, int y) {
     case SCR_VACATION: return R_VD_M.hit(x, y) || R_VD_P.hit(x, y) || R_VT_M.hit(x, y) || R_VT_P.hit(x, y);
     case SCR_PERIOD: return R_PS_M.hit(x, y) || R_PS_P.hit(x, y) || R_PE_M.hit(x, y) || R_PE_P.hit(x, y);
     case SCR_EDIT: return R_E_M.hit(x, y) || R_E_P.hit(x, y);
+    case SCR_KEYBOARD: return KB_BKSP.hit(x, y);
     default: return false;
   }
 }
@@ -1054,6 +1427,9 @@ void uiWake() {
   lastInputMs = millis();
   if (dimmed) { dimmed = false; lcd.setBrightness(cfg.brightness * 255 / 100); }
 }
+
+// ekrany, z których nie wracamy samoczynnie do ekranu głównego
+static bool keepScreen() { return scr == SCR_AP || scr == SCR_KEYBOARD || scr == SCR_WIFI_CONNECT; }
 
 void uiCalibrateTouch() {
   lcd.fillScreen(C_BG);
@@ -1072,6 +1448,7 @@ void uiCalibrateTouch() {
 void uiBegin() {
   lcd.init();
   lcd.setRotation(1);   // poziomo 480x320; jeśli obraz odwrócony: 3
+  themeApply(themeWanted());
   lcd.setBrightness(cfg.brightness * 255 / 100);
   lcd.fillScreen(C_BG);
   fontsInit();
@@ -1082,30 +1459,47 @@ void uiBegin() {
 }
 
 void uiLoop() {
-  uint32_t now = millis();
-
   if (calibrateReq) { calibrateReq = false; uiCalibrateTouch(); go(SCR_HOME); }
+
+  // ---- motyw (zmiana w menu lub o ustawionej godzinie)
+  uint8_t tw = themeWanted();
+  if (tw != themeCur) { themeApply(tw); needFull = true; }
 
   // ---- dotyk
   int32_t x, y;
   bool pressed = lcd.getTouch(&x, &y) > 0;
+  // Czas brany PO odczycie dotyku. Wcześniej "now" był sprzed odczytu,
+  // a uiWake() zapisywał późniejszy millis(): różnica now - lastInputMs
+  // przekręcała się na ~4 mld ms i ekran od razu gasł ponownie.
+  uint32_t now = millis();
   if (pressed) {
-    if (!touchDown) {
+    if (dimmed) {
+      // dowolny dotyk budzi wygaszony ekran (nie jest przekazywany dalej)
+      dimmed = false;
+      lcd.setBrightness(cfg.brightness * 255 / 100);
+      lastInputMs = now;
+      touchDown = true;
+      wakeTouch = true;
+      touchStartMs = now;
+      if (!keepScreen() && scr != SCR_HOME) go(SCR_HOME);
+      else needFull = true;
+    } else if (!touchDown) {
       touchDown = true;
       touchStartMs = lastRepeatMs = now;
       tx = x; ty = y;
       lastInputMs = now;
-      if (dimmed) { uiWake(); wakeTouch = true; if (scr != SCR_HOME) go(SCR_HOME); }
-      else if (locked) { uiToast("Zablokowane – przytrzymaj 3 s"); }
+      if (locked) uiToast("Zablokowane – przytrzymaj 3 s");
       else if (!wakeTouch) handleTouch(x, y, false, 0);
-    } else if (!wakeTouch) {
+    } else {
       lastInputMs = now;
-      uint32_t held = now - touchStartMs;
-      if (locked) {
-        if (held > LONG_PRESS_UNLOCK_MS) { locked = false; wakeTouch = true; uiToast("Odblokowano"); }
-      } else if (isStepper(tx, ty) && held > 500 && now - lastRepeatMs > 110) {
-        lastRepeatMs = now;
-        handleTouch(tx, ty, true, held);
+      if (!wakeTouch) {
+        uint32_t held = now - touchStartMs;
+        if (locked) {
+          if (held > LONG_PRESS_UNLOCK_MS) { locked = false; wakeTouch = true; uiToast("Odblokowano"); }
+        } else if (isStepper(tx, ty) && held > 500 && now - lastRepeatMs > 110) {
+          lastRepeatMs = now;
+          handleTouch(tx, ty, true, held);
+        }
       }
     }
   } else if (touchDown) {
@@ -1114,15 +1508,23 @@ void uiLoop() {
   }
 
   // ---- wygaszanie / blokada / powrót do ekranu głównego
-  uint32_t idle = now - lastInputMs;
+  now = millis();
+  uint32_t idle = (int32_t)(now - lastInputMs) > 0 ? now - lastInputMs : 0;
   if (!dimmed && cfg.dimAfter && idle > (uint32_t)cfg.dimAfter * 1000UL) {
     dimmed = true;
     lcd.setBrightness(cfg.dimBrightness * 255 / 100);
     if (cfg.childLock) locked = true;
-    if (scr != SCR_HOME && scr != SCR_AP) go(SCR_HOME);
+    if (!keepScreen() && scr != SCR_HOME) go(SCR_HOME);
   }
-  if (idle > UI_IDLE_HOME_MS && scr != SCR_HOME && scr != SCR_AP) go(SCR_HOME);
+  if (idle > UI_IDLE_HOME_MS && !keepScreen() && scr != SCR_HOME) go(SCR_HOME);
   if (!cfg.childLock) locked = false;
+
+  // ---- ekrany zależne od stanu Wi-Fi
+  static int lastScan = -3;
+  static uint8_t lastNet = 255;
+  if (scr == SCR_WIFI_SCAN && netScanState() != lastScan) { lastScan = netScanState(); needFull = true; }
+  if (scr == SCR_WIFI_CONNECT && netState() != lastNet) { lastNet = netState(); needFull = true; }
+  if (scr != SCR_WIFI_CONNECT) lastNet = 255;
 
   // ---- rysowanie
   if (toastUntil && (int32_t)(now - toastUntil) >= 0) { toastUntil = 0; needFull = true; }
@@ -1133,5 +1535,9 @@ void uiLoop() {
   } else if (scr == SCR_HOME && !toastUntil) {
     static uint32_t lastHome = 0;
     if (now - lastHome > 500) { lastHome = now; drawHome(false); }
+  } else if (scr == SCR_KEYBOARD && !toastUntil && now - kbBlinkMs > 500) {
+    kbBlinkMs = now;           // migający kursor; chowa też odsłonięty ostatni znak
+    kbCursor = !kbCursor;
+    drawKbField();
   }
 }

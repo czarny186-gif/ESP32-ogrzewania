@@ -15,3 +15,16 @@ String netIP();
 String netApName();
 const char *netApPass();
 int netRssi();
+
+// --- wyszukiwanie sieci i łączenie z poziomu ekranu
+struct WifiNet {
+  char   ssid[33];
+  int8_t rssi;
+  bool   secure;
+};
+#define WIFI_SCAN_MAX 20
+void netScanStart();                 // skanowanie w tle (nie blokuje)
+int netScanState();                  // -2 brak wyników, -1 trwa, >= 0 liczba sieci
+const WifiNet *netScanResults();     // posortowane od najsilniejszej
+void netConnectTo(const char *ssid, const char *pass);  // zapis + łączenie
+bool netLastFailed();                // ostatnia próba połączenia nieudana

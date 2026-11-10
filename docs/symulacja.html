@@ -102,7 +102,7 @@ td.m { font-family: var(--font-mono); white-space: nowrap; }
 <div class="wrap">
   <header>
     <h1>ESP32-ogrzewanie</h1>
-    <p>Symulacja termostatu na ESP32-C3 z ekranem ST7796 480×320. Klikaj ekran jak palcem; przytrzymanie + / − przewija wartości. Model pokoju, czujnika DS18B20 i głowicy grzejnika liczy się w tle, więc regulacja reaguje tak jak w urządzeniu.</p>
+    <p>Symulacja termostatu na ESP32-C3 z ekranem ST7796 480×320. Klikaj ekran jak palcem; przytrzymanie + / − przewija wartości. Hasło Wi-Fi możesz wpisać ekranową klawiaturą albo z klawiatury komputera. Model pokoju, czujnika DS18B20 i głowicy grzejnika liczy się w tle, więc regulacja reaguje tak jak w urządzeniu.</p>
   </header>
 
   <div class="stage">
@@ -187,11 +187,22 @@ td.m { font-family: var(--font-mono); white-space: nowrap; }
 <script>
 'use strict';
 // ============================================================ kolory/czcionki
-const C = {
+// Dwie palety jak w firmware (TH_DARK / TH_LIGHT w ui.cpp)
+const TH_DARK = {
   BG: 0x0E1116, PANEL: 0x1A1F27, PANEL2: 0x262D38, LINE: 0x353E4C, TEXT: 0xE8ECF1, MUTED: 0x8A94A3,
   HEAT: 0xFF6B2C, COMFORT: 0xF5A524, ECO: 0x4C9EEB, ECO_DK: 0x1D3550, FROST: 0x5ED6E6, VAC: 0x2EC4B6,
-  BOOST: 0xFF4FA3, OK: 0x3DD68C, ALARM: 0xF2545B
+  BOOST: 0xFF4FA3, OK: 0x3DD68C, ALARM: 0xF2545B, ONACC: 0x0E1116,
+  HEAT_BG: 0x3A2216, ALARM_BG: 0x3A1A1D, FROST_BG: 0x173740, HEAT_DIM: 0x7A3A1E
 };
+const TH_LIGHT = {
+  BG: 0xEEF1F4, PANEL: 0xFFFFFF, PANEL2: 0xE1E6EC, LINE: 0xC5CDD7, TEXT: 0x161B22, MUTED: 0x5D6877,
+  HEAT: 0xE2551B, COMFORT: 0xD98614, ECO: 0x2F7FD0, ECO_DK: 0xCFE0F3, FROST: 0x138FA0, VAC: 0x13998C,
+  BOOST: 0xD63384, OK: 0x1F9E63, ALARM: 0xD23B43, ONACC: 0x111418,
+  HEAT_BG: 0xFBE3D6, ALARM_BG: 0xF8DADC, FROST_BG: 0xD5EFF3, HEAT_DIM: 0xF2B79A
+};
+const C = { ...TH_DARK };
+let themeCur = 0;
+function themeApply(light) { Object.assign(C, light ? TH_LIGHT : TH_DARK); themeCur = light; }
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const F_S = 0, F_M = 1, F_B = 2, F_XL = 3, F_BIG = 4;
 const FONT = ["500 16px", "500 20px", "600 26px", "600 40px", "500 96px"].map(f => f + " 'Barlow Semi Condensed', 'Arial Narrow', sans-serif");
@@ -218,6 +229,7 @@ const lcd = {
   fillCircle(x, y, r, c) { ctx.fillStyle = css(c); ctx.beginPath(); ctx.arc(x, y, r + .5, 0, Math.PI * 2); ctx.fill(); },
   fillTriangle(x0, y0, x1, y1, x2, y2, c) { ctx.fillStyle = css(c); ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath(); ctx.fill(); },
   drawWideLine(x0, y0, x1, y1, r, c) { ctx.strokeStyle = css(c); ctx.lineWidth = r * 2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); },
+  fillEllipse(x, y, rx, ry, c) { ctx.fillStyle = css(c); ctx.beginPath(); ctx.ellipse(x, y, rx + .5, ry + .5, 0, 0, Math.PI * 2); ctx.fill(); },
   drawLine(x0, y0, x1, y1, c) { this.drawWideLine(x0 + .5, y0 + .5, x1 + .5, y1 + .5, .5, c); },
   drawFastHLine(x, y, w, c) { this.fillRect(x, y, w, 1, c); },
   drawFastVLine(x, y, h, c) { this.fillRect(x, y, 1, h, c); },
@@ -285,7 +297,8 @@ function defaults() {
     winEnable: 1, winDrop: 10, winTime: 5, winPause: 20,
     boostMin: 60, vacDays: 7, vacUntil: 0,
     brightness: 80, dimBrightness: 10, dimAfter: 60, childLock: 0,
-    ntp: 1, wifiEnable: 1, ssid: 'DomWiFi', week
+    ntp: 1, wifiEnable: 1, ssid: 'DomWiFi', pass: 'tajnehaslo', week,
+    theme: 0, themeDayFrom: 7, themeNightFrom: 21
   };
 }
 let cfg = defaults();
@@ -548,6 +561,9 @@ const CATEGORIES = [
     NUM("Przerwa w grzaniu", 5, 60, 5, 0, "min", GS('winPause'), "Czas wstrzymania grzania po wykryciu."),
   ]},
   { name: "Ekran", params: [
+    ENUM("Motyw", ["Ciemny", "Jasny", "Automatyczny"], GS('theme'), "Kolory menu. Automatyczny: jasny w dzień, ciemny wieczorem i w nocy (godziny poniżej)."),
+    NUM("Jasny od", 0, 23, 1, 0, ":00", GS('themeDayFrom'), "Motyw automatyczny: od tej godziny menu jest jasne."),
+    NUM("Ciemny od", 0, 23, 1, 0, ":00", GS('themeNightFrom'), "Motyw automatyczny: od tej godziny menu jest ciemne."),
     NUM("Jasność", 10, 100, 5, 0, "%", GS('brightness'), "Jasność podświetlenia podczas obsługi."),
     NUM("Jasność wygaszona", 0, 50, 5, 0, "%", GS('dimBrightness'), "Jasność po bezczynności. 0 = ekran wygaszony."),
     NUM("Wygaszanie po", 0, 600, 10, 0, "s", GS('dimAfter'), "Czas bezczynności do przyciemnienia ekranu.", "Nigdy"),
@@ -564,14 +580,15 @@ const CATEGORIES = [
   ]},
   { name: "Wi-Fi", params: [
     BOOL("Wi-Fi", GS('wifiEnable'), "Wi-Fi daje czas z NTP i panel WWW pod adresem IP termostatu."),
-    INFO("Stan", () => apMode ? "Punkt dostępowy" : !cfg.wifiEnable ? "Wyłączone" : cfg.ssid ? "Połączono (-58 dBm)" : "Brak połączenia"),
+    ACTION("Wyszukaj sieci", () => uiOpenWifiScan(), false, "Lista sieci w zasięgu – wybierz sieć i wpisz hasło na ekranie."),
+    INFO("Stan", () => { const s = netState(); return s === NET_AP ? "Punkt dostępowy" : !cfg.wifiEnable ? "Wyłączone" : s === NET_CONNECTED ? "Połączono (-58 dBm)" : s === NET_CONNECTING ? "Łączenie…" : "Brak połączenia"; }),
     INFO("Sieć", () => cfg.ssid || "—"),
-    INFO("Adres IP", () => apMode ? "192.168.4.1" : cfg.wifiEnable && cfg.ssid ? "192.168.1.47" : "-"),
+    INFO("Adres IP", () => apMode ? "192.168.4.1" : netState() === NET_CONNECTED ? "192.168.1.47" : "-"),
     ACTION("Konfiguruj przez telefon", () => { apMode = true; go(SCR_AP); }, false, "Uruchamia punkt dostępowy z formularzem."),
-    ACTION("Zapomnij sieć", () => { cfg.ssid = ''; uiToast("Usunięto dane sieci"); }, true, "Usuwa zapisaną nazwę i hasło sieci."),
+    ACTION("Zapomnij sieć", () => { cfg.ssid = ''; cfg.pass = ''; net.state = NET_OFF; uiToast("Usunięto dane sieci"); }, true, "Usuwa zapisaną nazwę i hasło sieci."),
   ]},
   { name: "Informacje", params: [
-    INFO("Wersja", () => "1.0.0"),
+    INFO("Wersja", () => "1.1.0"),
     INFO("Czas pracy", () => fmtDuration(Math.floor(simMs / 1000))),
     INFO("Grzanie łącznie", () => Math.floor(stats.heatSecondsTotal / 3600) + " h"),
     INFO("Załączeń wyjścia", () => String(stats.relayCycles)),
@@ -603,7 +620,8 @@ function paramFormat(p, v) {
 
 // ===================================================================== UI
 const SCR_HOME = 0, SCR_MODE = 1, SCR_VACATION = 2, SCR_PROGRAM = 3, SCR_PERIOD = 4, SCR_COPY = 5,
-  SCR_CHART = 6, SCR_MENU = 7, SCR_LIST = 8, SCR_EDIT = 9, SCR_CONFIRM = 10, SCR_AP = 11;
+  SCR_CHART = 6, SCR_MENU = 7, SCR_LIST = 8, SCR_EDIT = 9, SCR_CONFIRM = 10, SCR_AP = 11,
+  SCR_WIFI_SCAN = 12, SCR_KEYBOARD = 13, SCR_WIFI_CONNECT = 14;
 let scr = SCR_HOME, needFull = true, lastInput = performance.now(), dimmed = false, locked = false;
 let touchDown = false, touchStart = 0, lastRepeat = 0, tx = 0, ty = 0, wakeTouch = false;
 let toastMsg = '', toastUntil = 0, apMode = false;
@@ -677,14 +695,14 @@ function drawHome() {
   text(16, 8, clockOk ? `${pad2(t.getHours())}:${pad2(t.getMinutes())}` : "--:--", F_B, C.TEXT, C.BG);
   text(92, 14, `${DAY_ABBR[dowOf(t)]}, ${t.getDate()} ${MONTH_ABBR[t.getMonth()]}`, F_S, C.MUTED, C.BG);
   let x = 452;
-  if (cfg.wifiEnable) { iconWifi(x, 18, apMode ? 2 : (cfg.ssid ? 2 : 0), apMode ? C.VAC : C.TEXT, C.LINE); x -= 34; }
+  if (cfg.wifiEnable) { iconWifi(x, 18, apMode ? 2 : (net.state === NET_CONNECTED ? 2 : 0), apMode ? C.VAC : C.TEXT, C.LINE); x -= 34; }
   if (cfg.childLock) { iconLock(x, 18, locked ? C.COMFORT : C.MUTED, C.BG); x -= 30; }
   if (sensor.fault) iconWarn(x, 20, C.ALARM, C.BG);
   const ts = sensor.fault || isNaN(sensor.value) ? "--,-" : fmtTemp(Math.round(sensor.value * 10), false);
   const w = text(20, 78, ts, F_BIG, sensor.fault ? C.ALARM : C.TEXT, C.BG);
   text(20 + w + 6, 82, "°C", F_B, C.MUTED, C.BG);
   const [kind, chip] = homeChip();
-  const bg = kind === 1 ? 0x3A2216 : kind === 3 ? 0x3A1A1D : kind === 2 ? 0x173740 : C.PANEL;
+  const bg = kind === 1 ? C.HEAT_BG : kind === 3 ? C.ALARM_BG : kind === 2 ? C.FROST_BG : C.PANEL;
   const fg = kind === 1 ? C.HEAT : kind === 3 ? C.ALARM : kind === 2 ? C.FROST : kind === 0 ? C.MUTED : C.COMFORT;
   lcd.fillRoundRect(R_CHIP.x + 4, R_CHIP.y, Math.min(R_CHIP.w, textW(chip, F_M) + 52), R_CHIP.h, 19, bg);
   const ix = R_CHIP.x + 24, iy = R_CHIP.y + R_CHIP.h / 2;
@@ -755,7 +773,7 @@ function drawVacation() {
   textMid(24, 94, "Liczba dni", F_M, C.TEXT, C.BG); textMid(24, 164, "Temperatura", F_M, C.TEXT, C.BG);
   for (const r of [R_VD_M, R_VT_M]) { button(r, null, C.PANEL2); iconMinus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
   for (const r of [R_VD_P, R_VT_P]) { button(r, null, C.PANEL2); iconPlus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
-  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Rozpocznij", C.VAC, C.BG);
+  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Rozpocznij", C.VAC, C.ONACC);
   textMid(348, 94, String(vacDaysEdit), F_XL, C.TEXT, C.BG, AL_C);
   textMid(348, 164, fmtTemp(vacTempEdit), F_XL, C.VAC, C.BG, AL_C);
   const e = new Date(clockNowMs() + vacDaysEdit * 86400000);
@@ -794,8 +812,8 @@ function drawProgram() {
   for (let i = 0; i < 7; i++) {
     const r = dayTab(i), sel = i === progDay, bg = sel ? C.COMFORT : C.PANEL;
     lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, bg);
-    textMid(r.x + r.w / 2, r.y + r.h / 2, DAY_SHORT[i], F_M, sel ? C.BG : C.TEXT, bg, AL_C);
-    if (i === today) lcd.fillRect(r.x + 20, r.y + r.h - 5, 18, 3, sel ? C.BG : C.COMFORT);
+    textMid(r.x + r.w / 2, r.y + r.h / 2, DAY_SHORT[i], F_M, sel ? C.ONACC : C.TEXT, bg, AL_C);
+    if (i === today) lcd.fillRect(r.x + 20, r.y + r.h - 5, 18, 3, sel ? C.ONACC : C.COMFORT);
   }
   const d = cfg.week[progDay];
   drawTimeline(16, 102, 448, 26, d, -1, 0, 0);
@@ -838,8 +856,8 @@ function drawPeriod() {
   for (const r of [R_PS_M, R_PE_M]) { button(r, null, C.PANEL2); iconMinus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
   for (const r of [R_PS_P, R_PE_P]) { button(r, null, C.PANEL2); iconPlus(r.x + r.w / 2, r.y + r.h / 2, C.TEXT); }
   text(16, 232, "Krok 15 min · przytrzymaj, aby przewijać", F_S, C.MUTED, C.BG);
-  if (periodIdx >= 0) button(R_P_DEL, "Usuń", 0x3A1A1D, C.ALARM);
-  button(R_P_CAN, "Anuluj", C.PANEL2, C.TEXT); button(R_P_OK, "Zapisz", C.COMFORT, C.BG);
+  if (periodIdx >= 0) button(R_P_DEL, "Usuń", C.ALARM_BG, C.ALARM);
+  button(R_P_CAN, "Anuluj", C.PANEL2, C.TEXT); button(R_P_OK, "Zapisz", C.COMFORT, C.ONACC);
   textMid(348, 90, fmtHM(perStart), F_XL, C.TEXT, C.BG, AL_C);
   textMid(348, 156, fmtHM(perEnd), F_XL, C.TEXT, C.BG, AL_C);
   drawTimeline(16, 204, 448, 22, cfg.week[progDay], periodIdx >= 0 ? periodIdx : -2, perStart, perEnd);
@@ -898,7 +916,7 @@ function drawChart() {
     let prevX = -1, prevY = 0, prevS = 0;
     for (let i = 0; i < n; i++) {
       const k = idx(i), x = px(i), h = th.histHeat[k];
-      if (h > 0) lcd.fillRect(x - 1, 222, 3, 10, h >= 50 ? C.HEAT : 0x7A3A1E);
+      if (h > 0) lcd.fillRect(x - 1, 222, 3, 10, h >= 50 ? C.HEAT : C.HEAT_DIM);
       const sy = py(th.histTarget[k]);
       if (i > 0) { lcd.drawFastHLine(px(i - 1), prevS, x - px(i - 1), C.COMFORT); lcd.fillRect(x, Math.min(prevS, sy), 1, Math.abs(sy - prevS) + 1, C.COMFORT); }
       prevS = sy;
@@ -980,7 +998,7 @@ function drawEdit() {
   button(R_E_M, null, C.PANEL2); button(R_E_P, null, C.PANEL2);
   text(240, 166, p.type === P_ENUM ? `Opcje: ${p.opts.length}` : `Zakres: ${paramFormat(p, p.min)} … ${paramFormat(p, p.max)}`, F_S, C.MUTED, C.BG, AL_C);
   if (p.help) wrapText(24, 192, 432, p.help, F_S, C.TEXT, 20, 3);
-  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Zapisz", C.COMFORT, C.BG);
+  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Zapisz", C.COMFORT, C.ONACC);
   const v = paramFormat(p, editVal), f = textW(v, F_XL) > 216 ? F_B : F_XL;
   textMid(240, 112, v, f, C.COMFORT, C.BG, AL_C);
   iconMinus(R_E_M.x + R_E_M.w / 2, R_E_M.y + R_E_M.h / 2, editVal > p.min ? C.TEXT : C.LINE);
@@ -998,7 +1016,7 @@ function touchEdit(x, y, repeat, held) {
 function drawConfirm() {
   lcd.fillScreen(C.BG); header("Potwierdź", false);
   if (confirmParam) { textMid(240, 110, confirmParam.name, F_B, C.TEXT, C.BG, AL_C); if (confirmParam.help) wrapText(40, 150, 400, confirmParam.help, F_S, C.MUTED, 20, 3); }
-  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Wykonaj", C.ALARM, C.BG);
+  button(R_BTN_L, "Anuluj", C.PANEL2, C.TEXT); button(R_BTN_R, "Wykonaj", C.ALARM, C.ONACC);
 }
 function touchConfirm(x, y) {
   if (R_BTN_L.hit(x, y)) return go(confirmReturn);
@@ -1014,13 +1032,235 @@ function drawAp() {
   text(24, 218, "3. Wpisz nazwę i hasło sieci domowej.", F_M, C.MUTED, C.BG);
   button(R_BTN_R, "Zakończ", C.PANEL2, C.TEXT);
 }
+// =========================================================== Wi-Fi (model)
+const NET_OFF = 0, NET_CONNECTING = 1, NET_CONNECTED = 2, NET_AP = 3;
+const FAKE_NETS = [
+  { ssid: "DomWiFi", rssi: -48, secure: true }, { ssid: "UPC4471823", rssi: -61, secure: true },
+  { ssid: "Orange_Swiatlowod_7A21", rssi: -69, secure: true }, { ssid: "Sąsiad 5G", rssi: -78, secure: true },
+  { ssid: "FreeWiFi_Kawiarnia", rssi: -83, secure: false }, { ssid: "DIRECT-HP LaserJet", rssi: -87, secure: true },
+  { ssid: "PLAY_LTE_8812", rssi: -90, secure: true }];
+const net = { state: NET_CONNECTED, failed: false, scan: -2, results: [], scanEnd: 0, connEnd: 0 };
+const netState = () => apMode ? NET_AP : net.state;
+function netScanStart() { if (net.scan === -1) return; net.scan = -1; net.scanEnd = performance.now() + 2200; }
+function netConnectTo(ssid, pass) {
+  cfg.ssid = ssid; cfg.pass = pass; cfg.wifiEnable = 1; net.failed = false;
+  net.state = NET_CONNECTING; net.connEnd = performance.now() + 3000; net.pending = { ssid, pass };
+}
+function netPoll(now) {
+  if (net.scan === -1 && now >= net.scanEnd) { net.results = FAKE_NETS.map(n => ({ ...n, rssi: n.rssi + Math.round((Math.random() - .5) * 6) })).sort((a, b) => b.rssi - a.rssi); net.scan = net.results.length; }
+  if (net.state === NET_CONNECTING && now >= net.connEnd) {
+    const p = net.pending || { ssid: cfg.ssid, pass: cfg.pass };
+    const known = FAKE_NETS.find(n => n.ssid === p.ssid);
+    const ok = p.ssid !== "Sąsiad 5G" && (!known || !known.secure || p.pass.length >= 8);
+    net.state = ok ? NET_CONNECTED : NET_OFF; net.failed = !ok;
+  }
+}
+
+function iconEye(cx, cy, open, c, bg) {
+  lcd.fillEllipse(cx, cy, 13, 8, c); lcd.fillEllipse(cx, cy, 11, 6, bg); lcd.fillCircle(cx, cy, 4, c);
+  if (!open) { lcd.drawWideLine(cx - 12, cy + 10, cx + 12, cy - 10, 3, bg); lcd.drawWideLine(cx - 12, cy + 10, cx + 12, cy - 10, 1.3, c); }
+}
+function iconBackspace(cx, cy, c, bg) {
+  lcd.fillTriangle(cx - 15, cy, cx - 6, cy - 9, cx - 6, cy + 9, c); lcd.fillRoundRect(cx - 7, cy - 9, 21, 19, 3, c);
+  lcd.drawWideLine(cx - 1, cy - 4, cx + 7, cy + 4, 1.3, bg); lcd.drawWideLine(cx - 1, cy + 4, cx + 7, cy - 4, 1.3, bg);
+}
+function iconShift(cx, cy, filled, caps, c, bg) {
+  lcd.fillTriangle(cx, cy - 12, cx - 11, cy, cx + 11, cy, c); lcd.fillRect(cx - 5, cy, 11, 8, c);
+  if (!filled) { lcd.fillTriangle(cx, cy - 8, cx - 6, cy - 2, cx + 6, cy - 2, bg); lcd.fillRect(cx - 3, cy - 2, 7, 8, bg); }
+  if (caps) lcd.fillRect(cx - 7, cy + 11, 15, 3, c);
+}
+function iconSignal(cx, cy, rssi, on, off) {
+  lcd.fillCircle(cx, cy + 6, 2, on);
+  lcd.fillArc(cx, cy + 6, 7, 9, 225, 315, rssi > -75 ? on : off);
+  lcd.fillArc(cx, cy + 6, 12, 14, 225, 315, rssi > -62 ? on : off);
+}
+function fitText(s, f, maxw) {
+  if (textW(s, f) <= maxw) return s;
+  const a = [...s];
+  while (a.length) { a.pop(); const t = a.join('') + '…'; if (textW(t, f) <= maxw) return t; }
+  return '…';
+}
+
+// ------------------------------------------------------------ lista sieci
+const R_RESCAN = R(340, 6, 128, 36);
+let scanPage = 0;
+function uiOpenWifiScan() { netScanStart(); scanPage = 0; go(SCR_WIFI_SCAN); }
+function drawWifiScan() {
+  lcd.fillScreen(C.BG); header("Sieci Wi-Fi");
+  const st = net.scan, busy = st === -1;
+  button(R_RESCAN, busy ? "Szukam…" : "Odśwież", C.PANEL2, busy ? C.MUTED : C.TEXT, F_S);
+  if (busy) { iconSignal(240, 120, -40, C.COMFORT, C.LINE); text(240, 156, "Wyszukiwanie sieci…", F_M, C.MUTED, C.BG, AL_C); return; }
+  const n = st < 0 ? 0 : st, total = n + 1, pages = Math.ceil(total / ROWS);
+  if (scanPage >= pages) scanPage = 0;
+  for (let i = 0; i < ROWS; i++) {
+    const k = scanPage * ROWS + i; if (k >= total) break;
+    const r = listRow(i), cy = r.y + r.h / 2;
+    if (k < n) {
+      const w = net.results[k], cur = netState() === NET_CONNECTED && cfg.ssid === w.ssid;
+      lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, C.PANEL);
+      iconSignal(r.x + 24, cy - 3, w.rssi, C.TEXT, C.LINE);
+      textMid(r.x + 50, cy, fitText(w.ssid, F_M, cur ? 250 : 330), F_M, C.TEXT, C.PANEL);
+      if (cur) textMid(r.x + r.w - 62, cy, "połączono", F_S, C.OK, C.PANEL, AL_R);
+      if (w.secure) iconLock(r.x + r.w - 44, cy - 3, C.MUTED, C.PANEL);
+      iconChevron(r.x + r.w - 18, cy, 'r', C.MUTED);
+    } else {
+      lcd.drawRoundRect(r.x, r.y, r.w, r.h, 8, C.LINE); iconPlus(r.x + 24, cy, C.MUTED);
+      textMid(r.x + 50, cy, "Inna sieć (wpisz nazwę)", F_M, C.MUTED, C.BG);
+    }
+  }
+  if (n === 0) text(240, 120, st === -2 ? "Dotknij „Odśwież”, aby wyszukać sieci" : "Nie znaleziono sieci w zasięgu", F_M, C.MUTED, C.BG, AL_C);
+  if (pages > 1) {
+    button(R_UP, null, C.PANEL2); iconChevron(R_UP.x + R_UP.w / 2, R_UP.y + R_UP.h / 2, 'u', scanPage > 0 ? C.TEXT : C.LINE);
+    button(R_DN, null, C.PANEL2); iconChevron(R_DN.x + R_DN.w / 2, R_DN.y + R_DN.h / 2, 'd', scanPage < pages - 1 ? C.TEXT : C.LINE);
+    textMid(240, 294, `${scanPage + 1} / ${pages}`, F_M, C.MUTED, C.BG, AL_C);
+  }
+}
+function touchWifiScan(x, y) {
+  if (R_BACK.hit(x, y)) return go(SCR_LIST);
+  const st = net.scan;
+  if (R_RESCAN.hit(x, y)) { if (st !== -1) uiOpenWifiScan(); return; }
+  if (st === -1) return;
+  const n = st < 0 ? 0 : st, total = n + 1, pages = Math.ceil(total / ROWS);
+  if (pages > 1 && R_UP.hit(x, y)) { if (scanPage > 0) { scanPage--; go(SCR_WIFI_SCAN); } return; }
+  if (pages > 1 && R_DN.hit(x, y)) { if (scanPage < pages - 1) { scanPage++; go(SCR_WIFI_SCAN); } return; }
+  for (let i = 0; i < ROWS; i++) {
+    const k = scanPage * ROWS + i;
+    if (k >= total || !listRow(i).hit(x, y)) continue;
+    if (k === n) { kbSsid = ''; return kbOpen(KB_SSID, ''); }
+    const w = net.results[k]; kbSsid = w.ssid;
+    if (!w.secure) { netConnectTo(kbSsid, ''); return go(SCR_WIFI_CONNECT); }
+    return kbOpen(KB_PASS, cfg.ssid === kbSsid ? cfg.pass : '');
+  }
+}
+
+// ------------------------------------------------------------- klawiatura
+const KB_PASS = 0, KB_SSID = 1;
+let kbMode = KB_PASS, kbSsid = '', kbBuf = '', kbLayer = 0, kbShift = false, kbCaps = false, kbShow = false;
+let kbCursor = true, kbLastShift = 0, kbRevealUntil = 0, kbBlink = 0;
+const KB_ROWS = [["qwertyuiop", "asdfghjkl", "zxcvbnm"], ["1234567890", "@#$%&*-+()", "\"':;!?,"], ["1234567890", "~`|\\^=_{}[", "]<>/."]];
+const KB_FIELD = R(12, 58, 396, 50), KB_EYE = R(416, 58, 56, 50), KB_LEFT = R(2, 220, 66, 44), KB_BKSP = R(408, 220, 70, 44);
+const KB_MODE = R(2, 270, 92, 44), KB_SPACE = R(98, 270, 236, 44), KB_OK = R(338, 270, 140, 44);
+const kbKey = (row, i, n) => R(row < 2 ? (W - (n * 48 - 4)) / 2 + i * 48 : 72 + (7 - n) * 24 + i * 48, 120 + row * 50, 44, 44);
+const kbChar = (row, i) => { const c = KB_ROWS[kbLayer][row][i]; return kbLayer === 0 && (kbShift || kbCaps) ? c.toUpperCase() : c; };
+function kbOpen(mode, init) { kbMode = mode; kbBuf = init; kbLayer = 0; kbShift = kbCaps = kbShow = false; kbRevealUntil = 0; go(SCR_KEYBOARD); }
+function drawKbField() {
+  const f = KB_FIELD;
+  lcd.fillRoundRect(f.x, f.y, f.w, f.h, 10, C.PANEL); lcd.drawRoundRect(f.x, f.y, f.w, f.h, 10, C.LINE);
+  const x0 = f.x + 14, maxw = f.w - 30, cy = f.y + f.h / 2, chars = [...kbBuf], len = chars.length;
+  let cx = x0;
+  if (len === 0) textMid(x0 + 6, cy, kbMode === KB_PASS ? "Hasło sieci" : "Nazwa sieci (SSID)", F_M, C.MUTED, C.PANEL);
+  else if (kbMode === KB_PASS && !kbShow) {
+    const reveal = performance.now() < kbRevealUntil, maxDots = Math.floor((maxw - 20) / 14), start = Math.max(0, len - maxDots);
+    for (let i = start; i < len; i++) {
+      if (i === len - 1 && reveal) cx += textMid(cx, cy, chars[i], F_M, C.TEXT, C.PANEL) + 3;
+      else { lcd.fillCircle(cx + 5, cy, 5, C.TEXT); cx += 14; }
+    }
+  } else {
+    let p = 0; while (p < len && textW(chars.slice(p).join(''), F_M) > maxw - 6) p++;
+    cx += textMid(x0, cy, chars.slice(p).join(''), F_M, C.TEXT, C.PANEL) + 2;
+  }
+  if (kbCursor) lcd.fillRect(len ? cx : x0 + 2, cy - 13, 2, 26, C.COMFORT);
+  if (kbMode === KB_PASS) {
+    lcd.fillRoundRect(KB_EYE.x, KB_EYE.y, KB_EYE.w, KB_EYE.h, 10, kbShow ? C.COMFORT : C.PANEL2);
+    iconEye(KB_EYE.x + KB_EYE.w / 2, KB_EYE.y + KB_EYE.h / 2, kbShow, kbShow ? C.ONACC : C.TEXT, kbShow ? C.COMFORT : C.PANEL2);
+  }
+}
+function drawKeyboard() {
+  lcd.fillScreen(C.BG);
+  header(kbMode === KB_PASS ? `Hasło: ${fitText(kbSsid, F_B, 330)}` : "Nazwa sieci");
+  drawKbField();
+  for (let row = 0; row < 3; row++) {
+    const s = KB_ROWS[kbLayer][row];
+    for (let i = 0; i < s.length; i++) {
+      const r = kbKey(row, i, s.length);
+      lcd.fillRoundRect(r.x, r.y, r.w, r.h, 8, C.PANEL2);
+      textMid(r.x + r.w / 2, r.y + r.h / 2, kbChar(row, i), F_B, C.TEXT, C.PANEL2, AL_C);
+    }
+  }
+  const L = KB_LEFT;
+  if (kbLayer === 0) {
+    const on = kbShift || kbCaps, bg = on ? C.COMFORT : C.PANEL2;
+    lcd.fillRoundRect(L.x, L.y, L.w, L.h, 8, bg);
+    iconShift(L.x + L.w / 2, L.y + L.h / 2 - 1, on, kbCaps, on ? C.ONACC : C.TEXT, bg);
+  } else button(L, kbLayer === 1 ? "1/2" : "2/2", C.PANEL2, C.TEXT);
+  lcd.fillRoundRect(KB_BKSP.x, KB_BKSP.y, KB_BKSP.w, KB_BKSP.h, 8, C.PANEL2);
+  iconBackspace(KB_BKSP.x + KB_BKSP.w / 2, KB_BKSP.y + KB_BKSP.h / 2, C.TEXT, C.PANEL2);
+  button(KB_MODE, kbLayer === 0 ? "?123" : "ABC", C.PANEL2, C.TEXT);
+  button(KB_SPACE, "spacja", C.PANEL2, C.MUTED, F_S);
+  button(KB_OK, kbMode === KB_PASS ? "Połącz" : "Dalej", C.COMFORT, C.ONACC);
+}
+function kbType(c) {
+  if ([...kbBuf].length >= (kbMode === KB_PASS ? 63 : 32)) return;
+  kbBuf += c; kbRevealUntil = performance.now() + 1000; kbCursor = true;
+  if (kbShift && !kbCaps) { kbShift = false; go(SCR_KEYBOARD); } else needFull = true;
+}
+function kbBackspace() { kbBuf = [...kbBuf].slice(0, -1).join(''); kbRevealUntil = 0; needFull = true; }
+function kbSubmit() {
+  if (kbMode === KB_SSID) { if (!kbBuf) return uiToast("Wpisz nazwę sieci"); kbSsid = kbBuf; return kbOpen(KB_PASS, ''); }
+  if (kbBuf.length > 0 && kbBuf.length < 8) return uiToast("Hasło musi mieć min. 8 znaków");
+  netConnectTo(kbSsid, kbBuf); go(SCR_WIFI_CONNECT);
+}
+function touchKeyboard(x, y, repeat) {
+  if (KB_BKSP.hit(x, y)) return kbBackspace();
+  if (repeat) return;
+  if (R_BACK.hit(x, y)) return go(SCR_WIFI_SCAN);
+  if (kbMode === KB_PASS && KB_EYE.hit(x, y)) { kbShow = !kbShow; needFull = true; return; }
+  for (let row = 0; row < 3; row++) { const n = KB_ROWS[kbLayer][row].length; for (let i = 0; i < n; i++) if (kbKey(row, i, n).hit(x, y)) return kbType(kbChar(row, i)); }
+  if (KB_LEFT.hit(x, y)) {
+    if (kbLayer === 0) { const now = performance.now(); if (kbCaps) kbCaps = kbShift = false; else if (kbShift && now - kbLastShift < 500) kbCaps = true; else kbShift = !kbShift; kbLastShift = now; }
+    else kbLayer = kbLayer === 1 ? 2 : 1;
+    return go(SCR_KEYBOARD);
+  }
+  if (KB_MODE.hit(x, y)) { kbLayer = kbLayer === 0 ? 1 : 0; return go(SCR_KEYBOARD); }
+  if (KB_SPACE.hit(x, y)) return kbType(' ');
+  if (KB_OK.hit(x, y)) kbSubmit();
+}
+// fizyczna klawiatura komputera też wpisuje (tylko w symulacji)
+document.addEventListener('keydown', e => {
+  if (scr !== SCR_KEYBOARD || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest && e.target.closest('input, button')) return;
+  if (e.key === 'Backspace') { kbBackspace(); e.preventDefault(); }
+  else if (e.key === 'Enter') { kbSubmit(); e.preventDefault(); }
+  else if (e.key.length === 1 && e.key.charCodeAt(0) >= 32 && e.key.charCodeAt(0) < 127) { kbType(e.key); e.preventDefault(); }
+  lastInput = performance.now();
+});
+
+// --------------------------------------------------------------- łączenie
+function drawWifiConnect() {
+  lcd.fillScreen(C.BG); header("Wi-Fi", false);
+  const s = netState(), nm = fitText(cfg.ssid, F_B, 440);
+  if (s === NET_CONNECTING) {
+    iconSignal(240, 92, -40, C.COMFORT, C.LINE);
+    text(240, 124, "Łączenie z siecią", F_M, C.MUTED, C.BG, AL_C); text(240, 152, nm, F_B, C.TEXT, C.BG, AL_C);
+    text(240, 196, "To może potrwać do 20 sekund", F_S, C.MUTED, C.BG, AL_C);
+    button(R_BTN_R, "Zamknij", C.PANEL2, C.TEXT);
+  } else if (s === NET_CONNECTED) {
+    lcd.fillCircle(240, 96, 22, C.OK); lcd.drawWideLine(229, 97, 237, 105, 2.5, C.ONACC); lcd.drawWideLine(237, 105, 252, 88, 2.5, C.ONACC);
+    text(240, 130, "Połączono z siecią", F_M, C.MUTED, C.BG, AL_C); text(240, 158, nm, F_B, C.TEXT, C.BG, AL_C);
+    text(240, 200, "Adres IP: 192.168.1.47", F_M, C.TEXT, C.BG, AL_C);
+    button(R_BTN_R, "Gotowe", C.COMFORT, C.ONACC);
+  } else {
+    lcd.fillCircle(240, 96, 22, C.ALARM_BG); iconWarn(240, 97, C.ALARM, C.ALARM_BG);
+    text(240, 130, "Nie udało się połączyć z siecią", F_M, C.MUTED, C.BG, AL_C); text(240, 158, nm, F_B, C.TEXT, C.BG, AL_C);
+    text(240, 200, "Sprawdź hasło i zasięg sieci", F_M, C.TEXT, C.BG, AL_C);
+    button(R_BTN_L, "Zamknij", C.PANEL2, C.TEXT); button(R_BTN_R, "Zmień hasło", C.COMFORT, C.ONACC);
+  }
+}
+function touchWifiConnect(x, y) {
+  const s = netState();
+  if (s === NET_CONNECTING || s === NET_CONNECTED) { if (R_BTN_R.hit(x, y)) go(SCR_LIST); return; }
+  if (R_BTN_L.hit(x, y)) return go(SCR_LIST);
+  if (R_BTN_R.hit(x, y)) { kbSsid = cfg.ssid; kbOpen(KB_PASS, cfg.pass); }
+}
+const keepScreen = () => scr === SCR_AP || scr === SCR_KEYBOARD || scr === SCR_WIFI_CONNECT;
+
 function drawToast() {
   const w = textW(toastMsg, F_M) + 40, x = (W - w) / 2;
   lcd.fillRoundRect(x, 212, w, 40, 20, C.TEXT);
   textMid(W / 2, 232, toastMsg, F_M, C.BG, C.TEXT, AL_C);
 }
 function drawScreen() {
-  [drawHome, drawMode, drawVacation, drawProgram, drawPeriod, drawCopy, drawChart, drawMenu, drawList, drawEdit, drawConfirm, drawAp][scr]();
+  [drawHome, drawMode, drawVacation, drawProgram, drawPeriod, drawCopy, drawChart, drawMenu, drawList, drawEdit, drawConfirm, drawAp, drawWifiScan, drawKeyboard, drawWifiConnect][scr]();
 }
 function handleTouch(x, y, repeat, held) {
   switch (scr) {
@@ -1036,6 +1276,9 @@ function handleTouch(x, y, repeat, held) {
     case SCR_EDIT: return touchEdit(x, y, repeat, held);
     case SCR_CONFIRM: if (!repeat) touchConfirm(x, y); return;
     case SCR_AP: if (!repeat && R_BTN_R.hit(x, y)) { apMode = false; go(SCR_LIST); } return;
+    case SCR_WIFI_SCAN: if (!repeat) touchWifiScan(x, y); return;
+    case SCR_KEYBOARD: return touchKeyboard(x, y, repeat);
+    case SCR_WIFI_CONNECT: if (!repeat) touchWifiConnect(x, y); return;
   }
 }
 function isStepper(x, y) {
@@ -1044,8 +1287,14 @@ function isStepper(x, y) {
     case SCR_VACATION: return [R_VD_M, R_VD_P, R_VT_M, R_VT_P].some(r => r.hit(x, y));
     case SCR_PERIOD: return [R_PS_M, R_PS_P, R_PE_M, R_PE_P].some(r => r.hit(x, y));
     case SCR_EDIT: return R_E_M.hit(x, y) || R_E_P.hit(x, y);
+    case SCR_KEYBOARD: return KB_BKSP.hit(x, y);
   }
   return false;
+}
+function themeWanted() {
+  if (cfg.theme < 2) return cfg.theme;
+  const h = local().getHours(), a = cfg.themeDayFrom, b = cfg.themeNightFrom;
+  return (a <= b ? (h >= a && h < b) : (h >= a || h < b)) ? 1 : 0;
 }
 function wake() { lastInput = performance.now(); dimmed = false; }
 
@@ -1058,7 +1307,7 @@ canvas.addEventListener('pointercancel', () => { pointer = null; touchDown = fal
 function onPress() {
   const now = performance.now();
   touchDown = true; touchStart = lastRepeat = now; tx = pointer.x; ty = pointer.y; lastInput = now;
-  if (dimmed) { wake(); wakeTouch = true; if (scr !== SCR_HOME) go(SCR_HOME); needFull = true; }
+  if (dimmed) { wake(); wakeTouch = true; if (!keepScreen() && scr !== SCR_HOME) go(SCR_HOME); needFull = true; }
   else if (locked) uiToast("Zablokowane – przytrzymaj 3 s");
   else handleTouch(tx, ty, false, 0);
 }
@@ -1122,9 +1371,15 @@ function frame(now) {
     if (locked) { if (held > 3000) { locked = false; wakeTouch = true; uiToast("Odblokowano"); } }
     else if (isStepper(tx, ty) && held > 500 && now - lastRepeat > 110) { lastRepeat = now; handleTouch(tx, ty, true, held); }
   }
-  const idle = now - lastInput;
-  if (!dimmed && cfg.dimAfter && idle > cfg.dimAfter * 1000) { dimmed = true; if (cfg.childLock) locked = true; if (scr !== SCR_HOME && scr !== SCR_AP) go(SCR_HOME); needFull = true; }
-  if (idle > 60000 && scr !== SCR_HOME && scr !== SCR_AP) go(SCR_HOME);
+  const idle = Math.max(0, now - lastInput);
+  if (!dimmed && cfg.dimAfter && idle > cfg.dimAfter * 1000) { dimmed = true; if (cfg.childLock) locked = true; if (!keepScreen() && scr !== SCR_HOME) go(SCR_HOME); needFull = true; }
+  if (idle > 60000 && !keepScreen() && scr !== SCR_HOME) go(SCR_HOME);
+  // motyw
+  const tw = themeWanted(); if (tw !== themeCur) { themeApply(tw); needFull = true; }
+  // Wi-Fi
+  const ps = net.scan, pn = netState(); netPoll(now);
+  if ((scr === SCR_WIFI_SCAN && ps !== net.scan) || (scr === SCR_WIFI_CONNECT && pn !== netState())) needFull = true;
+  if (scr === SCR_KEYBOARD && now - kbBlink > 500) { kbBlink = now; kbCursor = !kbCursor; needFull = true; }
   if (!cfg.childLock) locked = false;
   if (toastUntil && now >= toastUntil) { toastUntil = 0; needFull = true; }
   if (scr === SCR_HOME && now - lastHome > 250) { lastHome = now; needFull = true; }
@@ -1133,7 +1388,7 @@ function frame(now) {
     drawScreen();
     if (toastUntil) drawToast();
     const b = dimmed ? cfg.dimBrightness : cfg.brightness;
-    if (b < 100) { ctx.fillStyle = `rgba(0,0,0,${(1 - Math.max(b, 3) / 100) * 0.6})`; ctx.fillRect(0, 0, W, H); }
+    if (b < 100) { ctx.fillStyle = `rgba(0,0,0,${(1 - Math.max(b, 3) / 100) * (dimmed ? 0.85 : 0.3)})`; ctx.fillRect(0, 0, W, H); }
   }
   updatePanel();
   requestAnimationFrame(frame);
