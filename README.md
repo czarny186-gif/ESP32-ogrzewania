@@ -85,11 +85,13 @@ Wszystkie ustawienia są zapisywane w pamięci NVS i zostają po zaniku zasilani
 
 **PlatformIO:** otwórz folder i uruchom `pio run -t upload`.
 
-**Arduino IDE:**
-1. Zainstaluj pakiet esp32 w wersji 3.x oraz biblioteki LovyanGFX, OneWire i DallasTemperature.
-2. Ustaw płytkę LOLIN C3 Mini.
-3. W ustawieniach wybierz Partition Scheme „No OTA (2MB APP/2MB SPIFFS)” i USB CDC On Boot „Enabled”.
-4. Otwórz `ogrzewanie.ino`. Kod jest w katalogu `src/`.
+**Arduino IDE (najprościej):** otwórz `arduino/ESP32_ogrzewania/ESP32_ogrzewania.ino`. Cały program jest w tym jednym pliku, a obok leży `czcionki.h` z czcionkami.
+1. W Menedżerze płytek zainstaluj „esp32” (Espressif) w wersji 3.x.
+2. W Menedżerze bibliotek zainstaluj LovyanGFX, OneWire i DallasTemperature.
+3. Ustaw: Płytka „LOLIN C3 Mini”, Partition Scheme „No OTA (2MB APP/2MB SPIFFS)”, USB CDC On Boot „Enabled”.
+4. Kliknij Wgraj.
+
+Ten szkic jest generowany z katalogu `src/` poleceniem `python3 tools/make_ino.py`.
 
 Przy pierwszym uruchomieniu pojawi się kalibracja dotyku. Ponowną kalibrację uruchomisz z menu Ekran albo przytrzymując przycisk BOOT podczas startu.
 
