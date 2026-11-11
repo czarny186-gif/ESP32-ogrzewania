@@ -306,7 +306,7 @@ static const Rect R_CHIP = {16, 174, 290, 38};
 static const Rect R_NAV[4] = {{16, 262, 108, 50}, {132, 262, 108, 50}, {248, 262, 108, 50}, {364, 262, 108, 50}};
 
 struct HomeCache {
-  char time[8], date[24], temp[12], set[12], mode[64], chip[48];
+  char time[8], date[24], temp[24], set[12], mode[64], chip[48];
   uint8_t icons;
   uint32_t setColor;
   bool canAdj;
@@ -426,12 +426,21 @@ static void drawHome(bool full) {
   // --- temperatura
   if (sensor.fault || isnan(sensor.value)) strcpy(buf, "--,-");
   else fmtTemp(buf, sizeof(buf), (int16_t)lroundf(sensor.value * 10), false);
-  if (strcmp(buf, hc.temp)) {
-    strcpy(hc.temp, buf);
+  char hum[8], key[24];
+  if (sensor.fault || isnan(sensor.hum)) strcpy(hum, "-- %");
+  else snprintf(hum, sizeof(hum), "%d %%", (int)lroundf(sensor.hum));
+  snprintf(key, sizeof(key), "%s|%s", buf, hum);
+  if (strcmp(key, hc.temp)) {
+    strcpy(hc.temp, key);
     lcd.fillRect(16, 72, 296, 96, C_BG);
     uint32_t col = sensor.fault ? C_ALARM : C_TEXT;
     int w = text(20, 78, buf, F_BIG, col, C_BG);
-    text(20 + w + 6, 82, "°C", F_B, C_MUTED, C_BG);
+    int x0 = 20 + w + 6;
+    text(x0, 82, "°C", F_B, C_MUTED, C_BG);
+    // wilgotność – mała wartość pod jednostką
+    lcd.fillCircle(x0 + 6, 140, 5, C_ECO);
+    lcd.fillTriangle(x0 + 1, 139, x0 + 11, 139, x0 + 6, 128, C_ECO);
+    text(x0 + 17, 128, hum, F_M, C_MUTED, C_BG);
   }
 
   // --- etykieta stanu

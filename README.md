@@ -7,7 +7,7 @@ Termostat pokojowy z dotykowym menu graficznym. Steruje głowicą termoelektrycz
 | Mikrokontroler | WEMOS LOLIN C3 Mini (ESP32-C3) |
 | Wyświetlacz | 4" ST7796, 480×320, SPI |
 | Dotyk | rezystancyjny, XPT2046 (na tej samej magistrali SPI) |
-| Czujnik | DS18B20 (1-Wire) |
+| Czujnik | SHT31 – temperatura i wilgotność (I²C) |
 | Wyjście | GPIO3, aktywne LOW → moduł przekaźnika lub stycznik |
 
 ## Połączenia
@@ -29,7 +29,9 @@ GPIO5  ────────────────  T_DO        (SDO/MISO w
 GPIO20 ────────────────  T_CS
                          T_IRQ – wolny
 
-DS18B20:  VDD → 3V3,  GND → GND,  DQ → GPIO0  + 4,7 kΩ DQ↔3V3
+SHT31 (moduł):  VIN → 3V3,  GND → GND,  SDA → GPIO0,  SCL → GPIO2
+                ADDR → GND lub wolny (adres 0x44); ADDR → 3V3 = 0x45 (wykrywany automatycznie)
+                Moduły mają własne rezystory podciągające 10 kΩ – nie trzeba dodawać.
 
 Przekaźnik (moduł z transoptorem, aktywny LOW):
   VCC   → 3V3          (strona sterująca)
@@ -42,7 +44,7 @@ Zasilanie: zasilacz 5 V min. 1 A na pin 5V płytki (lub USB-C).
 ```
 
 Dlaczego te piny:
-- GPIO2, 8 i 9 to piny startowe ESP32-C3. GPIO8 (DC) i GPIO9 (przycisk BOOT) są bezpieczne, bo przy starcie nic ich nie wymusza. GPIO2 zostaje wolny.
+- GPIO2, 8 i 9 to piny startowe ESP32-C3. GPIO8 (DC) i GPIO9 (przycisk BOOT) są bezpieczne, bo przy starcie nic ich nie wymusza. GPIO2 (SCL czujnika) przy starcie musi mieć stan wysoki – zapewniają to rezystory podciągające I²C na module SHT31.
 - GPIO18 i 19 to natywne USB, więc nie są używane.
 - GPIO3 jest „czysty”: nie jest pinem startowym ani UART i nie zmienia stanu podczas resetu. Razem z rezystorem podciągającym 10 kΩ głowica nie załączy się przy włączaniu zasilania.
 - GPIO7 to wbudowana dioda WS2812 (płytka v2.1). Świeci zielono przy czuwaniu, pomarańczowo przy grzaniu i miga na czerwono przy awarii czujnika.
@@ -68,7 +70,7 @@ Dlaczego te piny:
 
 **Wyjście:** logika ujemna lub dodatnia, siłownik NC lub NO, test wyjścia.
 
-**Czujnik:** korekta odczytu, filtr wygładzający, ponowne wykrywanie po podłączeniu.
+**Czujnik SHT31:** temperatura i wilgotność (wilgotność widoczna na ekranie głównym i w panelu WWW), korekta temperatury i wilgotności, filtr wygładzający, kontrola CRC odczytu, automatyczne wykrycie adresu 0x44/0x45 i ponowne wykrywanie po podłączeniu. Czujnik montuj na przewodzie z dala od płytki i wyświetlacza, które się nagrzewają.
 
 **Ekran:**
 - motyw ciemny, jasny albo automatyczny (jasny w dzień, ciemny wieczorem, godziny do ustawienia)
@@ -94,7 +96,7 @@ Wszystkie ustawienia są zapisywane w pamięci NVS i zostają po zaniku zasilani
 
 **Arduino IDE (najprościej):** otwórz `arduino/ESP32_ogrzewania/ESP32_ogrzewania.ino`. Cały program jest w tym jednym pliku, a obok leży `czcionki.h` z czcionkami.
 1. W Menedżerze płytek zainstaluj „esp32” (Espressif) w wersji 3.x.
-2. W Menedżerze bibliotek zainstaluj LovyanGFX, OneWire i DallasTemperature.
+2. W Menedżerze bibliotek zainstaluj LovyanGFX (czujnik SHT31 obsługuje kod programu, bez dodatkowej biblioteki).
 3. Ustaw: Płytka „LOLIN C3 Mini”, Partition Scheme „No OTA (2MB APP/2MB SPIFFS)”, USB CDC On Boot „Enabled”.
 4. Kliknij Wgraj.
 
@@ -115,7 +117,7 @@ src/main.cpp        pętla główna
 src/config.h        piny i stałe
 src/display.h       konfiguracja LovyanGFX (ST7796 + XPT2046)
 src/settings.*      ustawienia w NVS, program tygodniowy
-src/sensor.*        DS18B20 bez blokowania
+src/sensor.*        SHT31 (I2C) bez blokowania, z kontrolą CRC
 src/thermostat.*    regulator, tryby, ochrony, statystyki
 src/params.*        tabela parametrów menu Ustawienia
 src/ui.*            ekrany i obsługa dotyku

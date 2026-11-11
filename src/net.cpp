@@ -74,7 +74,7 @@ body{font-family:system-ui,sans-serif;background:#0e1116;color:#e8ecf1;margin:0;
 button,input,select{font-size:16px;padding:10px;border-radius:8px;border:1px solid #323b48;background:#252c37;color:#e8ecf1}
 button{min-width:56px;cursor:pointer}.row{display:flex;gap:8px;align-items:center;margin:8px 0}
 input{width:100%;box-sizing:border-box}.heat{color:#ff6b2c}</style></head><body>
-<div class="card"><div class="mut">Temperatura</div><div class="big" id="t">--</div>
+<div class="card"><div class="mut">Temperatura</div><div class="big" id="t">--</div><div class="mut" id="hu"></div>
 <div id="st" class="mut"></div></div>
 <div class="card"><div class="mut">Zadana</div><div class="row"><button onclick="adj(-5)">−</button>
 <div class="big" id="sp" style="font-size:32px;flex:1;text-align:center">--</div><button onclick="adj(5)">+</button></div>
@@ -89,15 +89,15 @@ input{width:100%;box-sizing:border-box}.heat{color:#ff6b2c}</style></head><body>
 function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b}).then(load)}
 function adj(d){post('/api/adjust','d='+d)}function setMode(m){post('/api/mode','m='+m)}
 function load(){fetch('/api/status').then(r=>r.json()).then(j=>{
-t.textContent=j.fault?'BŁĄD':j.temp.toFixed(1)+' °C';sp.textContent=(j.target/10).toFixed(1)+' °C';
+t.textContent=j.fault?'BŁĄD':j.temp.toFixed(1)+' °C';hu.textContent=j.fault?'':'wilgotność '+Math.round(j.hum)+' %';sp.textContent=(j.target/10).toFixed(1)+' °C';
 st.innerHTML=(j.heating?'<span class=heat>GRZANIE</span>':'czuwanie')+' · '+j.source;mode.value=j.mode})}
 load();setInterval(load,5000);</script></body></html>)HTML";
 
 static void sendStatus() {
   char buf[256];
   snprintf(buf, sizeof(buf),
-           "{\"temp\":%.2f,\"fault\":%s,\"target\":%d,\"mode\":%u,\"heating\":%s,\"source\":\"%s\",\"boost\":%lu}",
-           isnan(sensor.value) ? 0.0f : sensor.value, sensor.fault ? "true" : "false", th.target, cfg.mode,
+           "{\"temp\":%.2f,\"hum\":%.1f,\"fault\":%s,\"target\":%d,\"mode\":%u,\"heating\":%s,\"source\":\"%s\",\"boost\":%lu}",
+           isnan(sensor.value) ? 0.0f : sensor.value, isnan(sensor.hum) ? 0.0f : sensor.hum, sensor.fault ? "true" : "false", th.target, cfg.mode,
            th.heating ? "true" : "false", thermoSourceName(th.source), (unsigned long)thermoBoostLeftS());
   server.send(200, "application/json", buf);
 }

@@ -7,7 +7,7 @@ Stats stats;
 
 static Preferences prefs;
 static const uint32_t CFG_MAGIC = 0x0E5A2026;
-static const uint16_t CFG_VERSION = 2;
+static const uint16_t CFG_VERSION = 3;
 static uint32_t saveRequestedAt = 0;
 
 void settingsDefaults(Settings &s) {
@@ -72,7 +72,8 @@ void settingsDefaults(Settings &s) {
   s.theme = THEME_DARK;
   s.themeDayFrom = 7;
   s.themeNightFrom = 21;
-  s.wifiTx = 0;      // 8,5 dBm – płytki ESP32-C3 Mini mają wadliwy tor antenowy przy pełnej mocy
+  s.wifiTx = 0;
+  s.humOffset = 0;      // 8,5 dBm – płytki ESP32-C3 Mini mają wadliwy tor antenowy przy pełnej mocy
 }
 
 void settingsLoad() {
@@ -86,22 +87,24 @@ void settingsLoad() {
     settingsDefaults(def);
     tmp = def;
     prefs.getBytes("cfg", &tmp, n);
-    if (tmp.magic == CFG_MAGIC && (tmp.version == 1 || tmp.version == CFG_VERSION)) {
+    if (tmp.magic == CFG_MAGIC && tmp.version >= 1 && tmp.version <= CFG_VERSION) {
+      bool migrate = tmp.version < CFG_VERSION || n != sizeof(Settings);
       if (tmp.version == 1) {
-        // 1.0 nie miała motywu, 1.0 i 1.1 nie miały mocy nadajnika
+        // 1.0 nie miała motywu (rozpoznanie po długości zapisu), 1.0 i 1.1 – mocy nadajnika
         if (n < offsetof(Settings, themeNightFrom) + 1) {
           tmp.theme = def.theme;
           tmp.themeDayFrom = def.themeDayFrom;
           tmp.themeNightFrom = def.themeNightFrom;
         }
         tmp.wifiTx = def.wifiTx;
-        tmp.version = CFG_VERSION;
-        n = 0;   // wymuś zapis w nowym formacie
       }
+      if (tmp.version <= 2) tmp.humOffset = def.humOffset;   // 1.0–1.2 bez wilgotności
+      tmp.version = CFG_VERSION;
       if (tmp.wifiTx > 5) tmp.wifiTx = def.wifiTx;
+      if (tmp.humOffset < -10 || tmp.humOffset > 10) tmp.humOffset = 0;
       cfg = tmp;
       ok = true;
-      if (n != sizeof(Settings)) settingsSaveNow();
+      if (migrate) settingsSaveNow();
     }
   }
   if (!ok) {

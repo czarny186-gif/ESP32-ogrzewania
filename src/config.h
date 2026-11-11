@@ -1,13 +1,13 @@
 // ============================================================================
 //  ESP32-ogrzewanie – konfiguracja sprzętu
 //  Płytka: WEMOS LOLIN C3 Mini (ESP32-C3FH4), wyświetlacz 4" ST7796 480x320
-//  z dotykiem rezystancyjnym XPT2046, czujnik DS18B20, wyjście na stycznik /
+//  z dotykiem rezystancyjnym XPT2046, czujnik SHT31 (I2C), wyjście na stycznik /
 //  przekaźnik głowicy termoelektrycznej sterowane stanem NISKIM.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
 
-#define FW_VERSION "1.2.0"
+#define FW_VERSION "1.3.0"
 #define DEVICE_NAME "Termostat"
 
 // ---------------------------------------------------------------- PINY -----
@@ -23,7 +23,8 @@
 #define PIN_TOUCH_CS  20   // T_CS
                            // T_IRQ – niepodłączony (odpytywanie)
 
-#define PIN_DS18B20    0   // DQ czujnika + rezystor 4,7 kΩ do 3V3
+#define PIN_I2C_SDA    0   // SHT31 SDA  (moduły SHT31 mają rezystory 10 kΩ do 3V3)
+#define PIN_I2C_SCL    2   // SHT31 SCL  (GPIO2 = pin startowy; podciągnięcie I2C trzyma go w stanie wysokim – OK)
 #define PIN_OUTPUT     3   // IN modułu przekaźnika / stycznika – AKTYWNY STAN NISKI
                            // + rezystor 10 kΩ do 3V3 (stan bezpieczny przy resecie)
 #define PIN_RGB_LED    7   // wbudowana dioda WS2812 (LOLIN C3 Mini v2.1) – status
@@ -33,7 +34,7 @@
 #define SCREEN_W 480
 #define SCREEN_H 320
 
-#define SENSOR_PERIOD_MS     2000UL  // co ile odczyt DS18B20
+#define SENSOR_PERIOD_MS     2000UL  // co ile odczyt SHT31
 #define SENSOR_FAIL_COUNT    5       // ile błędnych odczytów = awaria
 #define CONTROL_PERIOD_MS    1000UL  // pętla regulacji
 #define HISTORY_PERIOD_S     300     // próbka wykresu co 5 min

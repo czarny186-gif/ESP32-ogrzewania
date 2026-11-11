@@ -3,19 +3,19 @@
 //
 //  Płytka:      WEMOS LOLIN C3 Mini (ESP32-C3)
 //  Wyświetlacz: 4" ST7796 480x320 SPI + dotyk rezystancyjny XPT2046
-//  Czujnik:     DS18B20
+//  Czujnik:     SHT31 (temperatura i wilgotność, I2C)
 //  Wyjście:     GPIO3, AKTYWNE STANEM NISKIM -> przekaźnik / stycznik głowicy
 //
 //  Arduino IDE:
 //   1. Menedżer płytek: "esp32" (Espressif) w wersji 3.x
-//   2. Menedżer bibliotek: LovyanGFX, OneWire, DallasTemperature
+//   2. Menedżer bibliotek: LovyanGFX (czujnik SHT31 nie wymaga biblioteki)
 //   3. Narzędzia -> Płytka: "LOLIN C3 Mini"
 //      Narzędzia -> Partition Scheme: "No OTA (2MB APP/2MB SPIFFS)"
 //      Narzędzia -> USB CDC On Boot: "Enabled"
 //   4. Plik czcionki.h musi leżeć w tym samym folderze co ten plik.
 //
 //  POŁĄCZENIA
-//   ESP32-C3      ST7796 / XPT2046 / DS18B20 / przekaźnik
+//   ESP32-C3      ST7796 / XPT2046 / SHT31 / przekaźnik
 //   GPIO4   ->    SCK  + T_CLK
 //   GPIO6   ->    SDI  + T_DIN  (MOSI)
 //   GPIO5   <-    T_DO          (SDO wyświetlacza NIE podłączać)
@@ -24,7 +24,8 @@
 //   GPIO1   ->    TFT RESET
 //   GPIO21  ->    TFT LED (podświetlenie PWM)
 //   GPIO20  ->    T_CS          (T_IRQ niepodłączony)
-//   GPIO0   <->   DS18B20 DQ    + 4,7 kΩ do 3V3
+//   GPIO0   <->   SHT31 SDA     (moduł SHT31: VIN->3V3, GND->GND)
+//   GPIO2   ->    SHT31 SCL     (ADDR do GND lub wolny = adres 0x44)
 //   GPIO3   ->    IN przekaźnika (aktywny LOW) + 10 kΩ do 3V3
 //   5V/GND  ->    VCC/GND wyświetlacza, JD-VCC przekaźnika
 //
@@ -33,8 +34,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <time.h>
@@ -46,12 +46,12 @@
 // ============================================================================
 //  ESP32-ogrzewanie – konfiguracja sprzętu
 //  Płytka: WEMOS LOLIN C3 Mini (ESP32-C3FH4), wyświetlacz 4" ST7796 480x320
-//  z dotykiem rezystancyjnym XPT2046, czujnik DS18B20, wyjście na stycznik /
+//  z dotykiem rezystancyjnym XPT2046, czujnik SHT31 (I2C), wyjście na stycznik /
 //  przekaźnik głowicy termoelektrycznej sterowane stanem NISKIM.
 // ============================================================================
 #include <Arduino.h>
 
-#define FW_VERSION "1.2.0"
+#define FW_VERSION "1.3.0"
 #define DEVICE_NAME "Termostat"
 
 // ---------------------------------------------------------------- PINY -----
@@ -67,7 +67,8 @@
 #define PIN_TOUCH_CS  20   // T_CS
                            // T_IRQ – niepodłączony (odpytywanie)
 
-#define PIN_DS18B20    0   // DQ czujnika + rezystor 4,7 kΩ do 3V3
+#define PIN_I2C_SDA    0   // SHT31 SDA  (moduły SHT31 mają rezystory 10 kΩ do 3V3)
+#define PIN_I2C_SCL    2   // SHT31 SCL  (GPIO2 = pin startowy; podciągnięcie I2C trzyma go w stanie wysokim – OK)
 #define PIN_OUTPUT     3   // IN modułu przekaźnika / stycznika – AKTYWNY STAN NISKI
                            // + rezystor 10 kΩ do 3V3 (stan bezpieczny przy resecie)
 #define PIN_RGB_LED    7   // wbudowana dioda WS2812 (LOLIN C3 Mini v2.1) – status
@@ -77,7 +78,7 @@
 #define SCREEN_W 480
 #define SCREEN_H 320
 
-#define SENSOR_PERIOD_MS     2000UL  // co ile odczyt DS18B20
+#define SENSOR_PERIOD_MS     2000UL  // co ile odczyt SHT31
 #define SENSOR_FAIL_COUNT    5       // ile błędnych odczytów = awaria
 #define CONTROL_PERIOD_MS    1000UL  // pętla regulacji
 #define HISTORY_PERIOD_S     300     // próbka wykresu co 5 min
@@ -251,6 +252,9 @@ struct Settings {
 
   // --- od wersji 1.2
   uint8_t wifiTx;          // indeks mocy nadajnika (0 = 8,5 dBm ... 5 = 19,5 dBm)
+
+  // --- od wersji 1.3
+  int8_t  humOffset;       // korekta wilgotności [%RH] (-10..10)
 };
 
 enum ThemeMode : uint8_t { THEME_DARK = 0, THEME_LIGHT, THEME_AUTO };
@@ -283,15 +287,17 @@ bool scheduleIsComfort(uint8_t dow, uint16_t minute);
 bool scheduleNextChange(uint8_t dow, uint16_t minute, uint8_t &dayOffset, uint16_t &atMinute);
 
 // ========================================================== sensor.h
-// Odczyt DS18B20 bez blokowania pętli (konwersja asynchroniczna).
+// Odczyt SHT31 (I2C) bez blokowania pętli: pomiar jednorazowy, odczyt po 20 ms.
 #include <Arduino.h>
 
 struct SensorState {
-  bool    present = false;   // znaleziono czujnik przy starcie
+  bool    present = false;   // czujnik odpowiada na I2C
   bool    fault = true;      // brak poprawnego odczytu
-  float   raw = NAN;         // ostatni surowy odczyt
-  float   value = NAN;       // po korekcie i filtrze
-  uint8_t rom[8] = {0};
+  float   raw = NAN;         // ostatnia surowa temperatura [°C]
+  float   value = NAN;       // temperatura po korekcie i filtrze
+  float   humRaw = NAN;      // ostatnia surowa wilgotność [%RH]
+  float   hum = NAN;         // wilgotność po korekcie i filtrze
+  uint8_t addr = 0;          // 0x44 (ADDR do GND) lub 0x45 (ADDR do 3V3)
   uint32_t lastOk = 0;
   uint16_t errors = 0;       // licznik błędów od startu
 };
@@ -471,7 +477,7 @@ enum Screen : uint8_t {
 };
 
 struct HomeCache {
-  char time[8], date[24], temp[12], set[12], mode[64], chip[48];
+  char time[8], date[24], temp[24], set[12], mode[64], chip[48];
   uint8_t icons;
   uint32_t setColor;
   bool canAdj;
@@ -486,7 +492,7 @@ Stats stats;
 
 static Preferences prefs;
 static const uint32_t CFG_MAGIC = 0x0E5A2026;
-static const uint16_t CFG_VERSION = 2;
+static const uint16_t CFG_VERSION = 3;
 static uint32_t saveRequestedAt = 0;
 
 void settingsDefaults(Settings &s) {
@@ -551,7 +557,8 @@ void settingsDefaults(Settings &s) {
   s.theme = THEME_DARK;
   s.themeDayFrom = 7;
   s.themeNightFrom = 21;
-  s.wifiTx = 0;      // 8,5 dBm – płytki ESP32-C3 Mini mają wadliwy tor antenowy przy pełnej mocy
+  s.wifiTx = 0;
+  s.humOffset = 0;      // 8,5 dBm – płytki ESP32-C3 Mini mają wadliwy tor antenowy przy pełnej mocy
 }
 
 void settingsLoad() {
@@ -565,22 +572,24 @@ void settingsLoad() {
     settingsDefaults(def);
     tmp = def;
     prefs.getBytes("cfg", &tmp, n);
-    if (tmp.magic == CFG_MAGIC && (tmp.version == 1 || tmp.version == CFG_VERSION)) {
+    if (tmp.magic == CFG_MAGIC && tmp.version >= 1 && tmp.version <= CFG_VERSION) {
+      bool migrate = tmp.version < CFG_VERSION || n != sizeof(Settings);
       if (tmp.version == 1) {
-        // 1.0 nie miała motywu, 1.0 i 1.1 nie miały mocy nadajnika
+        // 1.0 nie miała motywu (rozpoznanie po długości zapisu), 1.0 i 1.1 – mocy nadajnika
         if (n < offsetof(Settings, themeNightFrom) + 1) {
           tmp.theme = def.theme;
           tmp.themeDayFrom = def.themeDayFrom;
           tmp.themeNightFrom = def.themeNightFrom;
         }
         tmp.wifiTx = def.wifiTx;
-        tmp.version = CFG_VERSION;
-        n = 0;   // wymuś zapis w nowym formacie
       }
+      if (tmp.version <= 2) tmp.humOffset = def.humOffset;   // 1.0–1.2 bez wilgotności
+      tmp.version = CFG_VERSION;
       if (tmp.wifiTx > 5) tmp.wifiTx = def.wifiTx;
+      if (tmp.humOffset < -10 || tmp.humOffset > 10) tmp.humOffset = 0;
       cfg = tmp;
       ok = true;
-      if (n != sizeof(Settings)) settingsSaveNow();
+      if (migrate) settingsSaveNow();
     }
   }
   if (!ok) {
@@ -669,70 +678,98 @@ bool scheduleNextChange(uint8_t dow, uint16_t minute, uint8_t &dayOffset, uint16
 }
 
 // ========================================================== sensor.cpp
-#include <OneWire.h>
-#include <DallasTemperature.h>
+// SHT31 – własny, mały sterownik na Wire (bez dodatkowych bibliotek).
+#include <Wire.h>
 
 SensorState sensor;
 
-static OneWire oneWire(PIN_DS18B20);
-static DallasTemperature ds(&oneWire);
 static uint32_t lastRequest = 0;
-static bool converting = false;
+static bool measuring = false;
 static uint8_t badInRow = 0;
 
+// CRC-8 SHT3x: wielomian 0x31, start 0xFF
+static uint8_t crc8(const uint8_t *d, int n) {
+  uint8_t c = 0xFF;
+  for (int i = 0; i < n; i++) {
+    c ^= d[i];
+    for (int b = 0; b < 8; b++) c = (c & 0x80) ? (uint8_t)((c << 1) ^ 0x31) : (uint8_t)(c << 1);
+  }
+  return c;
+}
+
+static bool sendCmd(uint16_t cmd) {
+  Wire.beginTransmission(sensor.addr);
+  Wire.write((uint8_t)(cmd >> 8));
+  Wire.write((uint8_t)(cmd & 0xFF));
+  return Wire.endTransmission() == 0;
+}
+
+static bool probe(uint8_t a) {
+  Wire.beginTransmission(a);
+  return Wire.endTransmission() == 0;
+}
+
 static void findSensor() {
-  ds.begin();
-  sensor.present = ds.getAddress(sensor.rom, 0);
+  sensor.addr = probe(0x44) ? 0x44 : probe(0x45) ? 0x45 : 0;
+  sensor.present = sensor.addr != 0;
   if (sensor.present) {
-    ds.setResolution(sensor.rom, 12);
-    ds.setWaitForConversion(false);
+    sendCmd(0x30A2);   // miękki reset
+    delay(2);
+    sendCmd(0x3066);   // grzałka wyłączona
+  }
+}
+
+static void fail() {
+  sensor.errors++;
+  if (++badInRow >= SENSOR_FAIL_COUNT) {
+    sensor.fault = true;
+    sensor.present = false;            // spróbuj wykryć ponownie
   }
 }
 
 void sensorBegin() {
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 100000);
+  Wire.setTimeOut(20);
   findSensor();
   lastRequest = millis() - SENSOR_PERIOD_MS;
 }
 
 void sensorLoop() {
   uint32_t now = millis();
-  if (!converting) {
+  if (!measuring) {
     if (now - lastRequest < SENSOR_PERIOD_MS) return;
-    if (!sensor.present) findSensor();      // ponowne wykrycie po podłączeniu
-    if (!sensor.present) {
-      lastRequest = now;
-      if (++badInRow >= SENSOR_FAIL_COUNT) sensor.fault = true;
-      sensor.errors++;
-      return;
-    }
-    ds.requestTemperaturesByAddress(sensor.rom);
     lastRequest = now;
-    converting = true;
+    if (!sensor.present) findSensor();   // ponowne wykrycie po podłączeniu
+    if (!sensor.present) { fail(); return; }
+    if (!sendCmd(0x2400)) { fail(); return; }   // pomiar, wysoka powtarzalność, bez rozciągania zegara
+    measuring = true;
     return;
   }
-  if (now - lastRequest < 800) return;      // 12 bit = 750 ms
-  converting = false;
+  if (now - lastRequest < 20) return;   // pomiar trwa max 15 ms
+  measuring = false;
 
-  float t = ds.getTempC(sensor.rom);
-  // -127 = brak odpowiedzi, 85.0 = wartość po resecie (błąd zasilania)
-  bool bad = (t == DEVICE_DISCONNECTED_C) || (t == 85.0f) || t < -40 || t > 100;
-  if (bad) {
-    sensor.errors++;
-    if (++badInRow >= SENSOR_FAIL_COUNT) {
-      sensor.fault = true;
-      sensor.present = false;               // spróbuj wykryć ponownie
-    }
-    return;
-  }
+  uint8_t d[6];
+  if (Wire.requestFrom((int)sensor.addr, 6) != 6) { fail(); return; }
+  for (int i = 0; i < 6; i++) d[i] = Wire.read();
+  if (crc8(d, 2) != d[2] || crc8(d + 3, 2) != d[5]) { fail(); return; }
+
+  float t = -45.0f + 175.0f * (float)((d[0] << 8) | d[1]) / 65535.0f;
+  float rh = 100.0f * (float)((d[3] << 8) | d[4]) / 65535.0f;
+  if (t < -40 || t > 100) { fail(); return; }
+
   badInRow = 0;
   sensor.raw = t;
-  float corrected = t + cfg.offset / 10.0f;
+  sensor.humRaw = rh;
+  float tc = t + cfg.offset / 10.0f;
+  float hc = constrain(rh + cfg.humOffset, 0.0f, 100.0f);
   if (sensor.fault || isnan(sensor.value)) {
-    sensor.value = corrected;
+    sensor.value = tc;
+    sensor.hum = hc;
   } else {
     // filtr wykładniczy; filter 0 = brak, 5 = mocny
     float alpha = 1.0f / (1.0f + cfg.filter * 1.5f);
-    sensor.value += alpha * (corrected - sensor.value);
+    sensor.value += alpha * (tc - sensor.value);
+    sensor.hum += alpha * (hc - sensor.hum);
   }
   sensor.fault = false;
   sensor.lastOk = now;
@@ -1171,7 +1208,7 @@ body{font-family:system-ui,sans-serif;background:#0e1116;color:#e8ecf1;margin:0;
 button,input,select{font-size:16px;padding:10px;border-radius:8px;border:1px solid #323b48;background:#252c37;color:#e8ecf1}
 button{min-width:56px;cursor:pointer}.row{display:flex;gap:8px;align-items:center;margin:8px 0}
 input{width:100%;box-sizing:border-box}.heat{color:#ff6b2c}</style></head><body>
-<div class="card"><div class="mut">Temperatura</div><div class="big" id="t">--</div>
+<div class="card"><div class="mut">Temperatura</div><div class="big" id="t">--</div><div class="mut" id="hu"></div>
 <div id="st" class="mut"></div></div>
 <div class="card"><div class="mut">Zadana</div><div class="row"><button onclick="adj(-5)">−</button>
 <div class="big" id="sp" style="font-size:32px;flex:1;text-align:center">--</div><button onclick="adj(5)">+</button></div>
@@ -1186,15 +1223,15 @@ input{width:100%;box-sizing:border-box}.heat{color:#ff6b2c}</style></head><body>
 function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b}).then(load)}
 function adj(d){post('/api/adjust','d='+d)}function setMode(m){post('/api/mode','m='+m)}
 function load(){fetch('/api/status').then(r=>r.json()).then(j=>{
-t.textContent=j.fault?'BŁĄD':j.temp.toFixed(1)+' °C';sp.textContent=(j.target/10).toFixed(1)+' °C';
+t.textContent=j.fault?'BŁĄD':j.temp.toFixed(1)+' °C';hu.textContent=j.fault?'':'wilgotność '+Math.round(j.hum)+' %';sp.textContent=(j.target/10).toFixed(1)+' °C';
 st.innerHTML=(j.heating?'<span class=heat>GRZANIE</span>':'czuwanie')+' · '+j.source;mode.value=j.mode})}
 load();setInterval(load,5000);</script></body></html>)HTML";
 
 static void sendStatus() {
   char buf[256];
   snprintf(buf, sizeof(buf),
-           "{\"temp\":%.2f,\"fault\":%s,\"target\":%d,\"mode\":%u,\"heating\":%s,\"source\":\"%s\",\"boost\":%lu}",
-           isnan(sensor.value) ? 0.0f : sensor.value, sensor.fault ? "true" : "false", th.target, cfg.mode,
+           "{\"temp\":%.2f,\"hum\":%.1f,\"fault\":%s,\"target\":%d,\"mode\":%u,\"heating\":%s,\"source\":\"%s\",\"boost\":%lu}",
+           isnan(sensor.value) ? 0.0f : sensor.value, isnan(sensor.hum) ? 0.0f : sensor.hum, sensor.fault ? "true" : "false", th.target, cfg.mode,
            th.heating ? "true" : "false", thermoSourceName(th.source), (unsigned long)thermoBoostLeftS());
   server.send(200, "application/json", buf);
 }
@@ -1463,23 +1500,24 @@ static const Param P_OUT[] = {
 
 // ------------------------------------------------------------- Czujnik ---
 static void infoRaw(char *b, size_t n) {
-  if (isnan(sensor.raw)) snprintf(b, n, "—");
-  else snprintf(b, n, "%.2f °C", sensor.raw);
+  if (isnan(sensor.raw) || sensor.fault) snprintf(b, n, "—");
+  else snprintf(b, n, "%.2f °C · %.1f %%", sensor.raw, sensor.humRaw);
 }
 static void infoRom(char *b, size_t n) {
-  if (!sensor.present) { snprintf(b, n, "nie wykryto"); return; }
-  snprintf(b, n, "%02X%02X%02X%02X%02X%02X", sensor.rom[1], sensor.rom[2], sensor.rom[3], sensor.rom[4],
-           sensor.rom[5], sensor.rom[6]);
+  if (!sensor.present) snprintf(b, n, "nie wykryto");
+  else snprintf(b, n, "SHT31 · 0x%02X", sensor.addr);
 }
 static const Param P_SENS[] = {
-  NUM("Korekta odczytu", -50, 50, 1, 1, "°C", GS(offset),
+  NUM("Korekta temperatury", -50, 50, 1, 1, "°C", GS(offset),
       "Dodawana do odczytu. Porównaj z termometrem wzorcowym na wysokości 1,5 m."),
+  NUM("Korekta wilgotności", -10, 10, 1, 0, "%", GS(humOffset),
+      "Dodawana do odczytu wilgotności. Porównaj z higrometrem wzorcowym."),
   NUM("Wygładzanie", 0, 5, 1, 0, "", GS(filter), "Filtr odczytu: 0 = brak, 5 = mocne (wolniejsza reakcja).", "Brak"),
   ENUM("Przy awarii czujnika", O_FAULT, 2, GS(faultMode),
        "Praca cykliczna grzeje przez zadany % czasu – chroni przed wychłodzeniem przy uszkodzonym czujniku."),
   NUM("Wypełnienie awaryjne", 10, 50, 5, 0, "%", GS(faultDuty), "Udział czasu grzania w cyklu 20 min przy awarii."),
   INFO("Odczyt surowy", infoRaw),
-  INFO("Adres czujnika", infoRom),
+  INFO("Czujnik", infoRom),
 };
 
 // -------------------------------------------------------- Okno otwarte ---
@@ -2031,12 +2069,21 @@ static void drawHome(bool full) {
   // --- temperatura
   if (sensor.fault || isnan(sensor.value)) strcpy(buf, "--,-");
   else fmtTemp(buf, sizeof(buf), (int16_t)lroundf(sensor.value * 10), false);
-  if (strcmp(buf, hc.temp)) {
-    strcpy(hc.temp, buf);
+  char hum[8], key[24];
+  if (sensor.fault || isnan(sensor.hum)) strcpy(hum, "-- %");
+  else snprintf(hum, sizeof(hum), "%d %%", (int)lroundf(sensor.hum));
+  snprintf(key, sizeof(key), "%s|%s", buf, hum);
+  if (strcmp(key, hc.temp)) {
+    strcpy(hc.temp, key);
     lcd.fillRect(16, 72, 296, 96, C_BG);
     uint32_t col = sensor.fault ? C_ALARM : C_TEXT;
     int w = text(20, 78, buf, F_BIG, col, C_BG);
-    text(20 + w + 6, 82, "°C", F_B, C_MUTED, C_BG);
+    int x0 = 20 + w + 6;
+    text(x0, 82, "°C", F_B, C_MUTED, C_BG);
+    // wilgotność – mała wartość pod jednostką
+    lcd.fillCircle(x0 + 6, 140, 5, C_ECO);
+    lcd.fillTriangle(x0 + 1, 139, x0 + 11, 139, x0 + 6, 128, C_ECO);
+    text(x0 + 17, 128, hum, F_M, C_MUTED, C_BG);
   }
 
   // --- etykieta stanu
@@ -3154,7 +3201,7 @@ void uiLoop() {
 // ========================================================== main.cpp
 // ============================================================================
 //  ESP32-ogrzewanie – termostat pokojowy z ekranem dotykowym
-//  ESP32-C3 (LOLIN C3 Mini) + ST7796 480x320 + XPT2046 + DS18B20
+//  ESP32-C3 (LOLIN C3 Mini) + ST7796 480x320 + XPT2046 + SHT31
 //  Wyjście GPIO3 sterowane UJEMNIE -> przekaźnik/stycznik głowicy grzejnika.
 // ============================================================================
 #include <Arduino.h>

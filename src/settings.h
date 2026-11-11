@@ -81,6 +81,9 @@ struct Settings {
 
   // --- od wersji 1.2
   uint8_t wifiTx;          // indeks mocy nadajnika (0 = 8,5 dBm ... 5 = 19,5 dBm)
+
+  // --- od wersji 1.3
+  int8_t  humOffset;       // korekta wilgotności [%RH] (-10..10)
 };
 
 enum ThemeMode : uint8_t { THEME_DARK = 0, THEME_LIGHT, THEME_AUTO };

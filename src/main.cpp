@@ -1,6 +1,6 @@
 // ============================================================================
 //  ESP32-ogrzewanie – termostat pokojowy z ekranem dotykowym
-//  ESP32-C3 (LOLIN C3 Mini) + ST7796 480x320 + XPT2046 + DS18B20
+//  ESP32-C3 (LOLIN C3 Mini) + ST7796 480x320 + XPT2046 + SHT31
 //  Wyjście GPIO3 sterowane UJEMNIE -> przekaźnik/stycznik głowicy grzejnika.
 // ============================================================================
 #include <Arduino.h>

@@ -90,23 +90,24 @@ static const Param P_OUT[] = {
 
 // ------------------------------------------------------------- Czujnik ---
 static void infoRaw(char *b, size_t n) {
-  if (isnan(sensor.raw)) snprintf(b, n, "—");
-  else snprintf(b, n, "%.2f °C", sensor.raw);
+  if (isnan(sensor.raw) || sensor.fault) snprintf(b, n, "—");
+  else snprintf(b, n, "%.2f °C · %.1f %%", sensor.raw, sensor.humRaw);
 }
 static void infoRom(char *b, size_t n) {
-  if (!sensor.present) { snprintf(b, n, "nie wykryto"); return; }
-  snprintf(b, n, "%02X%02X%02X%02X%02X%02X", sensor.rom[1], sensor.rom[2], sensor.rom[3], sensor.rom[4],
-           sensor.rom[5], sensor.rom[6]);
+  if (!sensor.present) snprintf(b, n, "nie wykryto");
+  else snprintf(b, n, "SHT31 · 0x%02X", sensor.addr);
 }
 static const Param P_SENS[] = {
-  NUM("Korekta odczytu", -50, 50, 1, 1, "°C", GS(offset),
+  NUM("Korekta temperatury", -50, 50, 1, 1, "°C", GS(offset),
       "Dodawana do odczytu. Porównaj z termometrem wzorcowym na wysokości 1,5 m."),
+  NUM("Korekta wilgotności", -10, 10, 1, 0, "%", GS(humOffset),
+      "Dodawana do odczytu wilgotności. Porównaj z higrometrem wzorcowym."),
   NUM("Wygładzanie", 0, 5, 1, 0, "", GS(filter), "Filtr odczytu: 0 = brak, 5 = mocne (wolniejsza reakcja).", "Brak"),
   ENUM("Przy awarii czujnika", O_FAULT, 2, GS(faultMode),
        "Praca cykliczna grzeje przez zadany % czasu – chroni przed wychłodzeniem przy uszkodzonym czujniku."),
   NUM("Wypełnienie awaryjne", 10, 50, 5, 0, "%", GS(faultDuty), "Udział czasu grzania w cyklu 20 min przy awarii."),
   INFO("Odczyt surowy", infoRaw),
-  INFO("Adres czujnika", infoRom),
+  INFO("Czujnik", infoRom),
 };
 
 // -------------------------------------------------------- Okno otwarte ---

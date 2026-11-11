@@ -76,19 +76,19 @@ def main():
 //
 //  Płytka:      WEMOS LOLIN C3 Mini (ESP32-C3)
 //  Wyświetlacz: 4" ST7796 480x320 SPI + dotyk rezystancyjny XPT2046
-//  Czujnik:     DS18B20
+//  Czujnik:     SHT31 (temperatura i wilgotność, I2C)
 //  Wyjście:     GPIO3, AKTYWNE STANEM NISKIM -> przekaźnik / stycznik głowicy
 //
 //  Arduino IDE:
 //   1. Menedżer płytek: "esp32" (Espressif) w wersji 3.x
-//   2. Menedżer bibliotek: LovyanGFX, OneWire, DallasTemperature
+//   2. Menedżer bibliotek: LovyanGFX (czujnik SHT31 nie wymaga biblioteki)
 //   3. Narzędzia -> Płytka: "LOLIN C3 Mini"
 //      Narzędzia -> Partition Scheme: "No OTA (2MB APP/2MB SPIFFS)"
 //      Narzędzia -> USB CDC On Boot: "Enabled"
 //   4. Plik czcionki.h musi leżeć w tym samym folderze co ten plik.
 //
 //  POŁĄCZENIA
-//   ESP32-C3      ST7796 / XPT2046 / DS18B20 / przekaźnik
+//   ESP32-C3      ST7796 / XPT2046 / SHT31 / przekaźnik
 //   GPIO4   ->    SCK  + T_CLK
 //   GPIO6   ->    SDI  + T_DIN  (MOSI)
 //   GPIO5   <-    T_DO          (SDO wyświetlacza NIE podłączać)
@@ -97,7 +97,8 @@ def main():
 //   GPIO1   ->    TFT RESET
 //   GPIO21  ->    TFT LED (podświetlenie PWM)
 //   GPIO20  ->    T_CS          (T_IRQ niepodłączony)
-//   GPIO0   <->   DS18B20 DQ    + 4,7 kΩ do 3V3
+//   GPIO0   <->   SHT31 SDA     (moduł SHT31: VIN->3V3, GND->GND)
+//   GPIO2   ->    SHT31 SCL     (ADDR do GND lub wolny = adres 0x44)
 //   GPIO3   ->    IN przekaźnika (aktywny LOW) + 10 kΩ do 3V3
 //   5V/GND  ->    VCC/GND wyświetlacza, JD-VCC przekaźnika
 //
@@ -106,8 +107,7 @@ def main():
 
 #include <Arduino.h>
 #include <Preferences.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <time.h>
